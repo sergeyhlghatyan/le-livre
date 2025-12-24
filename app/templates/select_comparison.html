@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Select Versions to Compare - § {{ section_num }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Compare Versions - § {{ section_num }}</h1>
+    <p>Select two years to compare</p>
+</div>
+
+<form method="get" action="{{ url_for('comparison.compare', section_num=section_num) }}" class="comparison-form">
+    <div class="form-group">
+        <label for="year1"><strong>Compare this version:</strong></label>
+        <select name="year1" id="year1" required>
+            {% for year in available_years %}
+            <option value="{{ year }}">{{ year }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="year2"><strong>With this version:</strong></label>
+        <select name="year2" id="year2" required>
+            {% for year in available_years|reverse %}
+            <option value="{{ year }}" {% if loop.first %}selected{% endif %}>{{ year }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Show Comparison</button>
+        <a href="{{ url_for('sections.view_section', section_num=section_num) }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+
+<div class="quick-links">
+    <h3>Quick Comparisons:</h3>
+    <ul>
+        {% if available_years|length >= 2 %}
+        <li>
+            <a href="{{ url_for('comparison.compare', section_num=section_num, year1=available_years[0], year2=available_years[-1]) }}">
+                Compare {{ available_years[0] }} → {{ available_years[-1] }} (full range)
+            </a>
+        </li>
+        {% endif %}
+        {% if available_years|length >= 2 %}
+        <li>
+            <a href="{{ url_for('comparison.compare', section_num=section_num, year1=available_years[-2], year2=available_years[-1]) }}">
+                Compare {{ available_years[-2] }} → {{ available_years[-1] }} (recent changes)
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+</div>
+
+{% endblock %}

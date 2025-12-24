@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}Compare § {{ section_num }}: {{ year1 }} vs {{ year2 }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>18 U.S.C. § {{ section_num }} - Comparison</h1>
+    <p class="subtitle">{{ year1 }} vs {{ year2 }}</p>
+</div>
+
+<div class="comparison-stats">
+    <div class="stat">
+        <span class="stat-value added">{{ stats.added }}</span>
+        <span class="stat-label">Added</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value deleted">{{ stats.deleted }}</span>
+        <span class="stat-label">Deleted</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value modified">{{ stats.modified }}</span>
+        <span class="stat-label">Modified</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value moved" style="color: #f59e0b;">{{ stats.moved }}</span>
+        <span class="stat-label">Moved</span>
+    </div>
+    <div class="stat">
+        <span class="stat-value unchanged">{{ stats.unchanged }}</span>
+        <span class="stat-label">Unchanged</span>
+    </div>
+</div>
+
+<div class="controls">
+    <a href="{{ url_for('sections.view_section', section_num=section_num) }}" class="btn btn-secondary">
+        Back to Section
+    </a>
+    <a href="{{ url_for('comparison.compare', section_num=section_num) }}" class="btn btn-secondary">
+        Choose Different Years
+    </a>
+</div>
+
+<div class="diff-navigation">
+    <button id="prev-diff" class="btn btn-secondary">
+        ← Previous Diff
+    </button>
+    <span id="diff-counter">Diff 1 of {{ stats.added + stats.deleted + stats.modified + stats.moved }}</span>
+    <button id="next-diff" class="btn btn-secondary">
+        Next Diff →
+    </button>
+    <span class="keyboard-hint">Keyboard: ← → or n/p</span>
+</div>
+
+<div class="comparison-container">
+    <div class="comparison-header">
+        <h3>{{ year1 }} - {{ heading1 }}</h3>
+        <h3>{{ year2 }} - {{ heading2 }}</h3>
+    </div>
+
+    <div class="comparison-content">
+        {% for diff in diffs %}
+        {# Calculate indentation from ID depth #}
+        {% set id_parts = diff.id.split('/') %}
+        {% set depth = id_parts|length - 5 %}  {# /us/usc/t18/s922 = 5 parts, everything after is hierarchy #}
+        {% set indent = depth * 30 %}  {# 30px per level #}
+
+        <div class="diff-row {{ diff.type }}" style="padding-left: {{ indent }}px;">
+            <!-- Left cell (old version) -->
+            {% if diff.type == 'added' %}
+                <div class="diff-cell empty"></div>
+            {% elif diff.type == 'moved' %}
+                <div class="diff-cell moved">
+                    <span class="provision-id" style="color: #666; font-size: 0.85em; font-family: monospace;">{{ diff.old_id }}</span>
+                    {% if diff.old.num %}
+                        <span class="num">{{ diff.old.num }}</span>
+                    {% endif %}
+                    {% if diff.old.text %}
+                        <span class="text">{{ diff.old.text }}</span>
+                    {% else %}
+                        <span class="text text-muted"><em>[Structural provision - see child provisions]</em></span>
+                    {% endif %}
+                </div>
+            {% else %}
+                <div class="diff-cell {{ diff.type }}">
+                    <span class="provision-id" style="color: #666; font-size: 0.85em; font-family: monospace;">{{ diff.id }}</span>
+                    {% if diff.old.num %}
+                        <span class="num">{{ diff.old.num }}</span>
+                    {% endif %}
+                    {% if diff.old.text %}
+                        <span class="text">{{ diff.old.text }}</span>
+                    {% else %}
+                        <span class="text text-muted"><em>[Structural provision - see child provisions]</em></span>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            <!-- Right cell (new version) -->
+            {% if diff.type == 'deleted' %}
+                <div class="diff-cell empty"></div>
+            {% elif diff.type == 'moved' %}
+                <div class="diff-cell moved">
+                    <span class="provision-id" style="color: #666; font-size: 0.85em; font-family: monospace;">{{ diff.new_id }}</span>
+                    {% if diff.new.num %}
+                        <span class="num">{{ diff.new.num }}</span>
+                    {% endif %}
+                    {% if diff.new.text %}
+                        <span class="text">{{ diff.new.text }}</span>
+                    {% else %}
+                        <span class="text text-muted"><em>[Structural provision - see child provisions]</em></span>
+                    {% endif %}
+                </div>
+            {% else %}
+                <div class="diff-cell {{ diff.type }}">
+                    <span class="provision-id" style="color: #666; font-size: 0.85em; font-family: monospace;">{{ diff.id }}</span>
+                    {% if diff.new.num %}
+                        <span class="num">{{ diff.new.num }}</span>
+                    {% endif %}
+                    {% if diff.new.text %}
+                        <span class="text">{{ diff.new.text }}</span>
+                    {% else %}
+                        <span class="text text-muted"><em>[Structural provision - see child provisions]</em></span>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="comparison-legend">
+    <h4>Legend:</h4>
+    <div class="legend-items">
+        <div class="legend-item">
+            <span class="legend-color added"></span>
+            <span>Added - New provision in {{ year2 }}</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color deleted"></span>
+            <span>Deleted - Removed from {{ year2 }}</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color modified"></span>
+            <span>Modified - Text changed</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color moved" style="background-color: #f59e0b;"></span>
+            <span>Moved - Relocated to different path (see IDs)</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-color unchanged"></span>
+            <span>Unchanged - Same in both versions</span>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/diff-navigation.js') }}"></script>
+{% endblock %}

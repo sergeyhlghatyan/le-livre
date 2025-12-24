@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}18 U.S.C. Sections{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Title 18 U.S.C. Sections</h1>
+    <p>Historical versions from 1994 to 2024</p>
+</div>
+
+<div class="section-list">
+    <table class="sections-table">
+        <thead>
+            <tr>
+                <th>Section</th>
+                <th>Heading</th>
+                <th>Years Available</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for section in sections %}
+            <tr>
+                <td class="section-num">
+                    <a href="{{ url_for('sections.view_section', section_num=section.num) }}">
+                        § {{ section.num }}
+                    </a>
+                </td>
+                <td class="section-heading">{{ section.heading }}</td>
+                <td class="section-years">
+                    {{ section.year_range }}
+                    <span class="year-count">({{ section.years|length }} versions)</span>
+                </td>
+                <td class="section-actions">
+                    <a href="{{ url_for('sections.view_section', section_num=section.num) }}"
+                       class="btn btn-sm btn-primary">View</a>
+                    {% if section.years|length > 1 %}
+                    <a href="{{ url_for('comparison.compare', section_num=section.num) }}"
+                       class="btn btn-sm btn-secondary">Compare</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="stats">
+    <p><strong>Total sections:</strong> {{ sections|length }}</p>
+</div>
+{% endblock %}

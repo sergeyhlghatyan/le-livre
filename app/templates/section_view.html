@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}18 U.S.C. § {{ section_num }} - {{ heading }}{% endblock %}
+
+{% macro render_provision(node, level_class) %}
+    <div class="{{ level_class }}">
+        {% if node.num %}
+            <span class="num">{{ node.num }}</span>
+        {% endif %}
+        {% if node.text %}
+            <span class="text">{{ node.text }}</span>
+        {% endif %}
+
+        {% if node.paragraphs %}
+            {% for paragraph in node.paragraphs %}
+                {{ render_provision(paragraph, 'paragraph') }}
+            {% endfor %}
+        {% endif %}
+
+        {% if node.subparagraphs %}
+            {% for subparagraph in node.subparagraphs %}
+                {{ render_provision(subparagraph, 'subparagraph') }}
+            {% endfor %}
+        {% endif %}
+
+        {% if node.clauses %}
+            {% for clause in node.clauses %}
+                {{ render_provision(clause, 'clause') }}
+            {% endfor %}
+        {% endif %}
+
+        {% if node.subclauses %}
+            {% for subclause in node.subclauses %}
+                {{ render_provision(subclause, 'subclause') }}
+            {% endfor %}
+        {% endif %}
+    </div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-header">
+    <h1>18 U.S.C. § {{ section_num }}</h1>
+    <h2>{{ heading }}</h2>
+</div>
+
+<div class="controls">
+    <div class="version-selector">
+        <label><strong>Version:</strong></label>
+        <select onchange="window.location.href='{{ url_for('sections.view_section_year', section_num=section_num, year=0) }}'.replace('/0', '/' + this.value)">
+            {% for year in available_years %}
+            <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>
+                {{ year }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="actions">
+        {% if available_years|length > 1 %}
+        <a href="{{ url_for('comparison.compare', section_num=section_num) }}" class="btn btn-primary">
+            Compare Versions
+        </a>
+        {% endif %}
+        <a href="{{ url_for('sections.index') }}" class="btn btn-secondary">Back to Index</a>
+    </div>
+</div>
+
+<div class="statute-content">
+    {% if data.subsections %}
+        {% for subsection in data.subsections %}
+            {{ render_provision(subsection, 'subsection') }}
+        {% endfor %}
+    {% else %}
+        <p class="no-content">No content available for this version.</p>
+    {% endif %}
+</div>
+
+{% endblock %}
