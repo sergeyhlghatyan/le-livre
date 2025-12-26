@@ -38,6 +38,16 @@ htmlcov/
 .env.local
 .env.*.local
 
+# Node.js / Frontend
+node_modules/
+frontend/node_modules/
+.svelte-kit/
+frontend/.svelte-kit/
+.vercel
+.netlify
+package-lock.json
+frontend/package-lock.json
+
 # Generated data (keep raw data)
 data/sections/
 data/views/
@@ -56,3 +66,4 @@ data/index.html
 *.log
 logs/
 data/
+.mcp.json.env

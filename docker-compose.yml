@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lelivre-postgres
+    environment:
+      POSTGRES_DB: lelivre_gold
+      POSTGRES_USER: lelivre
+      POSTGRES_PASSWORD: lelivre123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/schemas/pgvector.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - lelivre-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lelivre"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.15
+    container_name: lelivre-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/lelivre123
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - lelivre-net
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p lelivre123 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  lelivre-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
