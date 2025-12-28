@@ -400,6 +400,10 @@ async def get_hierarchy(provision_id: str, year: int = 2024):
         Nested hierarchy with provision and all children
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         hierarchy = get_provision_hierarchy(provision_id, year)
 
         if not hierarchy:
@@ -429,6 +433,10 @@ async def get_graph(provision_id: str, year: int = 2024):
         Graph with nodes (provisions) and edges (parent_of, references)
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         driver = get_neo4j_driver()
 
         with driver.session() as session:
@@ -544,6 +552,10 @@ async def get_provision_by_id(provision_id: str, year: int):
         Single provision with full text content
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         with get_postgres_conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -642,6 +654,10 @@ async def get_provision_context_endpoint(
         GET /provisions/context/us/usc/t18/s922/d?year=2024
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         context = get_provision_context(
             provision_id=provision_id,
             year=year,
@@ -685,6 +701,10 @@ async def get_provision_timeline_changes(provision_id: str):
         List of TimelineChange objects
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         driver = get_neo4j_driver()
 
         with driver.session() as session:
@@ -772,6 +792,10 @@ async def get_impact_radius_endpoint(
         ImpactRadiusResponse with nodes, edges, and statistics
     """
     try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
         from ..services.graph import get_impact_radius
 
         result = get_impact_radius(
