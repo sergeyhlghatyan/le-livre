@@ -274,6 +274,63 @@ def test_graph_queries():
     driver.close()
 
 
+def run_phase0_enrichment():
+    """
+    Run Phase 0 enrichment pipelines to create new relationships.
+
+    This function orchestrates:
+    1. Amendment detection (AMENDED_FROM relationships)
+    2. Definition extraction (USES_DEFINITION relationships)
+    3. Semantic similarity (SEMANTICALLY_SIMILAR relationships)
+    """
+    import subprocess
+    import sys
+
+    print("\n" + "="*60)
+    print("PHASE 0 ENRICHMENT PIPELINE")
+    print("="*60 + "\n")
+
+    # Get the pipeline directory
+    pipeline_dir = Path(__file__).parent
+
+    # 1. Detect amendments
+    print("\n[1/3] Running amendment detection...\n")
+    result = subprocess.run(
+        [sys.executable, str(pipeline_dir / "detect_amendments.py")],
+        capture_output=False
+    )
+    if result.returncode != 0:
+        print("⚠️  Amendment detection failed")
+    else:
+        print("✅ Amendment detection complete\n")
+
+    # 2. Extract definitions
+    print("\n[2/3] Running definition extraction...\n")
+    result = subprocess.run(
+        [sys.executable, str(pipeline_dir / "extract_definitions.py")],
+        capture_output=False
+    )
+    if result.returncode != 0:
+        print("⚠️  Definition extraction failed")
+    else:
+        print("✅ Definition extraction complete\n")
+
+    # 3. Compute similarity
+    print("\n[3/3] Running semantic similarity computation...\n")
+    result = subprocess.run(
+        [sys.executable, str(pipeline_dir / "compute_similarity.py")],
+        capture_output=False
+    )
+    if result.returncode != 0:
+        print("⚠️  Similarity computation failed")
+    else:
+        print("✅ Similarity computation complete\n")
+
+    print("\n" + "="*60)
+    print("PHASE 0 ENRICHMENT COMPLETE")
+    print("="*60 + "\n")
+
+
 if __name__ == "__main__":
     """Test Neo4j loading."""
 
@@ -283,3 +340,8 @@ if __name__ == "__main__":
         test_graph_queries()
 
     print("\n✅ Neo4j pipeline complete!")
+
+    # Optionally run Phase 0 enrichment
+    import sys
+    if "--phase0" in sys.argv:
+        run_phase0_enrichment()

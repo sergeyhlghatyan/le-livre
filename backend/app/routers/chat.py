@@ -21,6 +21,7 @@ class ChatResponse(BaseModel):
     sources: list
     semantic_count: int
     graph_count: int
+    year_used: int  # Year used for the search
 
 
 @router.post("", response_model=ChatResponse)
@@ -29,13 +30,17 @@ async def chat(request: ChatRequest):
     Chat endpoint with RAG.
 
     Performs hybrid search (semantic + graph) and generates an answer.
+    Defaults to year 2024 if not specified.
     """
     try:
+        # Default to latest year (2024) if not specified
+        search_year = request.year if request.year is not None else 2024
+
         # Perform hybrid search
         search_results = hybrid_search(
             query=request.query,
             limit=request.limit,
-            year=request.year
+            year=search_year
         )
 
         # Generate answer
@@ -49,7 +54,8 @@ async def chat(request: ChatRequest):
             answer=answer,
             sources=search_results["results"],
             semantic_count=search_results["semantic_count"],
-            graph_count=search_results["graph_count"]
+            graph_count=search_results["graph_count"],
+            year_used=search_year
         )
 
     except Exception as e:

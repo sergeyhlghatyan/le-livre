@@ -1,13 +1,11 @@
 """Diff service for comparing provision versions."""
 from typing import Dict, Any, List, Optional, Tuple
 import difflib
-import openai
 from collections import defaultdict
 from ..database import get_postgres_conn
 from ..config import get_settings
 
 settings = get_settings()
-openai.api_key = settings.openai_api_key
 
 
 def get_provision_text(provision_id: str, year: int) -> Dict[str, Any]:
@@ -73,46 +71,6 @@ def generate_text_diff(old_text: str, new_text: str) -> List[str]:
     return list(diff)
 
 
-def generate_diff_summary(old_provision: Dict[str, Any], new_provision: Dict[str, Any], diff_lines: List[str]) -> str:
-    """
-    Generate LLM summary of changes between two provision versions.
-
-    Args:
-        old_provision: Old provision data
-        new_provision: New provision data
-        diff_lines: Unified diff lines
-
-    Returns:
-        LLM-generated summary of changes
-    """
-    diff_text = '\n'.join(diff_lines)
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a legal analyst specializing in US firearms law. "
-                      "Summarize changes between two versions of a legal provision. "
-                      "Focus on substantive changes, new requirements, removed provisions, "
-                      "and practical implications. Be concise and clear."
-        },
-        {
-            "role": "user",
-            "content": f"Provision: {old_provision['provision_id']}\n"
-                      f"From: {old_provision['year']}\n"
-                      f"To: {new_provision['year']}\n\n"
-                      f"Unified Diff:\n{diff_text}\n\n"
-                      f"Summarize the key changes:"
-        }
-    ]
-
-    response = openai.chat.completions.create(
-        model="gpt-4-turbo-preview",
-        messages=messages,
-        temperature=0.3,
-        max_tokens=500
-    )
-
-    return response.choices[0].message.content
 
 
 def compare_provisions(provision_id: str, year_old: int, year_new: int) -> Dict[str, Any]:
@@ -152,14 +110,8 @@ def compare_provisions(provision_id: str, year_old: int, year_new: int) -> Dict[
         new_provision["text_content"]
     )
 
-    # Generate summary if there are changes
-    summary = None
+    # Check if there are changes
     has_changes = len(diff_lines) > 2  # More than just headers
-
-    if has_changes:
-        summary = generate_diff_summary(old_provision, new_provision, diff_lines)
-    else:
-        summary = "No changes detected between these versions."
 
     return {
         "provision_id": provision_id,
@@ -168,8 +120,7 @@ def compare_provisions(provision_id: str, year_old: int, year_new: int) -> Dict[
         "old_provision": old_provision,
         "new_provision": new_provision,
         "diff": diff_lines,
-        "has_changes": has_changes,
-        "summary": summary
+        "has_changes": has_changes
     }
 
 
@@ -182,6 +133,7 @@ def get_provision_hierarchy(provision_id: str, year: int) -> Optional[Dict[str, 
     Get provision with all nested children from database.
 
     Builds a hierarchical tree structure of provisions.
+    Optimized to use a single query instead of N+1.
 
     Args:
         provision_id: Provision ID (e.g., '/us/usc/t18/s922/a')
@@ -193,46 +145,26 @@ def get_provision_hierarchy(provision_id: str, year: int) -> Optional[Dict[str, 
     with get_postgres_conn() as conn:
         cur = conn.cursor()
 
-        # Get the provision itself
+        # Single query: Get the provision AND all its children in one go
         cur.execute(
             """
             SELECT provision_id, section_num, year, provision_level,
                    provision_num, text_content, heading
             FROM provision_embeddings
-            WHERE provision_id = %s AND year = %s
-            """,
-            (provision_id, year)
-        )
-
-        row = cur.fetchone()
-        if not row:
-            return None
-
-        provision = {
-            "provision_id": row[0],
-            "section_num": row[1],
-            "year": row[2],
-            "provision_level": row[3],
-            "provision_num": row[4],
-            "text_content": row[5],
-            "heading": row[6],
-            "children": []
-        }
-
-        # Get all children (provisions starting with this ID + '/')
-        cur.execute(
-            """
-            SELECT provision_id, section_num, year, provision_level,
-                   provision_num, text_content, heading
-            FROM provision_embeddings
-            WHERE provision_id LIKE %s AND year = %s
+            WHERE (provision_id = %s OR provision_id LIKE %s)
+              AND year = %s
             ORDER BY provision_id
             """,
-            (provision_id + '/%', year)
+            (provision_id, provision_id + '/%', year)
         )
 
-        all_provisions = [provision]
-        for row in cur.fetchall():
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        # Convert rows to dict
+        all_provisions = []
+        for row in rows:
             all_provisions.append({
                 "provision_id": row[0],
                 "section_num": row[1],
@@ -247,12 +179,12 @@ def get_provision_hierarchy(provision_id: str, year: int) -> Optional[Dict[str, 
         # Build hierarchy by parent-child relationships
         provision_map = {p["provision_id"]: p for p in all_provisions}
 
-        for prov in all_provisions[1:]:  # Skip root
+        for prov in all_provisions[1:]:  # Skip root (first row is always root)
             parent_id = '/'.join(prov["provision_id"].split('/')[:-1])
             if parent_id in provision_map:
                 provision_map[parent_id]["children"].append(prov)
 
-        return provision
+        return all_provisions[0]  # Return root
 
 
 def generate_inline_diff(
@@ -346,19 +278,14 @@ def compare_hierarchical(
         # Check if text changed
         text_changed = old_node["text_content"] != new_node["text_content"]
 
-        # Generate inline diff if changed
+        # Generate inline diff if changed - ONLY compute requested granularity
         inline_diff = None
         if text_changed:
             inline_diff = {
-                "sentence": generate_inline_diff(
+                granularity: generate_inline_diff(
                     old_node["text_content"],
                     new_node["text_content"],
-                    "sentence"
-                ),
-                "word": generate_inline_diff(
-                    old_node["text_content"],
-                    new_node["text_content"],
-                    "word"
+                    granularity
                 )
             }
 
@@ -412,82 +339,9 @@ def compare_hierarchical(
 
     hierarchy_diff = compare_node(old_hierarchy, new_hierarchy)
 
-    # Generate summary
-    summary = generate_hierarchical_summary(hierarchy_diff, provision_id, year_old, year_new)
-
     return {
         "provision_id": provision_id,
         "year_old": year_old,
         "year_new": year_new,
-        "hierarchy_diff": hierarchy_diff,
-        "summary": summary
+        "hierarchy_diff": hierarchy_diff
     }
-
-
-def generate_hierarchical_summary(
-    hierarchy_diff: Dict[str, Any],
-    provision_id: str,
-    year_old: int,
-    year_new: int
-) -> str:
-    """
-    Generate LLM summary that understands hierarchical changes.
-
-    Args:
-        hierarchy_diff: Hierarchical diff structure
-        provision_id: Provision ID
-        year_old: Old year
-        year_new: New year
-
-    Returns:
-        AI-generated summary referencing specific hierarchy levels
-    """
-    # Build a structured description of changes
-    def describe_changes(node: Dict, path: str = "") -> List[str]:
-        changes = []
-        current_path = f"{path} {node['provision_num']}" if path else node['provision_num']
-
-        if node['status'] == 'modified' and node['text_changed']:
-            changes.append(f"- {node['provision_level'].capitalize()} {current_path}: Text modified")
-        elif node['status'] == 'added':
-            changes.append(f"- {node['provision_level'].capitalize()} {current_path}: Added")
-        elif node['status'] == 'removed':
-            changes.append(f"- {node['provision_level'].capitalize()} {current_path}: Removed")
-
-        for child in node.get('children', []):
-            changes.extend(describe_changes(child, current_path))
-
-        return changes
-
-    change_list = describe_changes(hierarchy_diff)
-    changes_text = '\n'.join(change_list) if change_list else "No changes detected"
-
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a legal analyst specializing in US firearms law. "
-                      "Summarize changes between two versions of a legal provision. "
-                      "Reference specific subsections, paragraphs, clauses as appropriate. "
-                      "Focus on substantive changes and practical implications."
-        },
-        {
-            "role": "user",
-            "content": f"Provision: {provision_id}\n"
-                      f"From: {year_old}\n"
-                      f"To: {year_new}\n\n"
-                      f"Hierarchical Changes:\n{changes_text}\n\n"
-                      f"Provide a concise summary of the key changes:"
-        }
-    ]
-
-    if not change_list:
-        return "No changes detected between these versions."
-
-    response = openai.chat.completions.create(
-        model="gpt-4-turbo-preview",
-        messages=messages,
-        temperature=0.3,
-        max_tokens=500
-    )
-
-    return response.choices[0].message.content

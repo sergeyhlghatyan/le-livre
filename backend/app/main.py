@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .database import close_neo4j_driver
-from .routers import chat, provisions
+from .routers import chat, provisions, auth
 
 settings = get_settings()
 
@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 # Routers
+app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(provisions.router)
 

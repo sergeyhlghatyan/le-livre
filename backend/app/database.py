@@ -2,7 +2,10 @@
 import psycopg
 from neo4j import GraphDatabase
 from contextlib import contextmanager
-from .config import get_settings
+try:
+    from .config import get_settings
+except ImportError:
+    from config import get_settings
 
 settings = get_settings()
 

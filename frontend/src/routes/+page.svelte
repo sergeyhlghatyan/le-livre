@@ -1,151 +1,101 @@
 <script lang="ts">
-	import { api, type ChatResponse } from '$lib/api';
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { auth } from '$lib/stores/auth.svelte';
 
-	let query = $state('');
-	let loading = $state(false);
-	let response = $state<ChatResponse | null>(null);
-	let error = $state('');
+	// Auth guard - redirect to login if not authenticated
+	onMount(() => {
+		if (!auth.isAuthenticated && !auth.loading) {
+			goto('/login');
+		}
+	});
 
-	const exampleQuestions = [
-		"What are the requirements for licensed firearms dealers?",
-		"What provisions apply to interstate firearm transfers?",
-		"What are the prohibited acts under section 922?",
-		"How have ammunition regulations changed over time?",
-		"What are the penalties for violating section 922?"
+	const sections = [
+		{
+			id: '922',
+			title: 'Title 18 USC § 922',
+			description: 'Unlawful Acts',
+			subtitle: 'Firearms regulations and prohibited acts'
+		}
 	];
 
-	function setExample(example: string) {
-		query = example;
-	}
-
-	async function handleSubmit() {
-		if (!query.trim()) return;
-
-		loading = true;
-		error = '';
-		response = null;
-
-		try {
-			response = await api.chat({ query, limit: 10 });
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
-		} finally {
-			loading = false;
-		}
+	function viewSection(sectionId: string) {
+		goto(`/section/${sectionId}`);
 	}
 </script>
 
-<div class="px-4 py-6">
-	<div class="mb-8">
-		<h1 class="text-3xl font-bold text-gray-900 mb-2">Legal Assistant</h1>
-		<p class="text-gray-600">Ask questions about US firearms law (Title 18 USC)</p>
+{#if auth.loading}
+	<div class="flex items-center justify-center h-full">
+		<div class="text-neutral-500 dark:text-neutral-400">Loading...</div>
 	</div>
+{:else if !auth.isAuthenticated}
+	<div class="flex items-center justify-center h-full">
+		<div class="text-neutral-500 dark:text-neutral-400">Redirecting to login...</div>
+	</div>
+{:else}
+	<div class="flex flex-col h-full bg-neutral-50 dark:bg-neutral-900">
+		<div class="flex-1 overflow-y-auto">
+			<div class="max-w-4xl mx-auto px-6 py-12">
+				<!-- Header -->
+				<div class="mb-12">
+				<h1 class="text-3xl font-bold text-neutral-900 dark:text-neutral-50 mb-3">
+					Le Livre
+				</h1>
+				<p class="text-neutral-600 dark:text-neutral-400">
+					Browse US Code provisions with historical timeline tracking
+				</p>
+			</div>
 
-	<!-- Example Questions -->
-	{#if !response}
-		<div class="mb-6">
-			<p class="text-sm font-medium text-gray-700 mb-3">Try these examples:</p>
-			<div class="flex flex-wrap gap-2">
-				{#each exampleQuestions as example}
+			<!-- Sections List -->
+			<div class="space-y-4">
+				<h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50 mb-4">
+					Available Sections
+				</h2>
+
+				{#each sections as section}
 					<button
-						onclick={() => setExample(example)}
-						class="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm rounded-lg border border-blue-200 transition-colors"
+						onclick={() => viewSection(section.id)}
+						class="w-full text-left p-6 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-md transition-all"
 					>
-						{example}
+						<div class="flex items-start justify-between">
+							<div class="flex-1">
+								<h3 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50 mb-1">
+									{section.title}
+								</h3>
+								<p class="text-sm text-neutral-600 dark:text-neutral-400 mb-2">
+									{section.description}
+								</p>
+								<p class="text-xs text-neutral-500 dark:text-neutral-500">
+									{section.subtitle}
+								</p>
+							</div>
+							<div class="ml-4">
+								<svg
+									class="w-6 h-6 text-neutral-400"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M9 5l7 7-7 7"
+									/>
+								</svg>
+							</div>
+						</div>
 					</button>
 				{/each}
 			</div>
-		</div>
-	{/if}
 
-	<!-- Chat Input -->
-	<div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
-		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-			<label for="query" class="block text-sm font-medium text-gray-700 mb-2">
-				Your Question
-			</label>
-			<textarea
-				id="query"
-				bind:value={query}
-				rows="3"
-				class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-				placeholder="e.g., What are the requirements for licensed firearms dealers?"
-			></textarea>
-			<div class="mt-4">
-				<button
-					type="submit"
-					disabled={loading || !query.trim()}
-					class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
-				>
-					{loading ? 'Searching...' : 'Ask Question'}
-				</button>
+			<!-- Footer Info -->
+			<div class="mt-12 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+				<p class="text-sm text-blue-900 dark:text-blue-100">
+					<strong>Note:</strong> More sections will be added as they become available.
+				</p>
 			</div>
-		</form>
+		</div>
 	</div>
-
-	<!-- Error Message -->
-	{#if error}
-		<div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-			<p class="text-red-800">{error}</p>
-		</div>
-	{/if}
-
-	<!-- Response -->
-	{#if response}
-		<div class="space-y-6">
-			<!-- Answer -->
-			<div class="bg-white rounded-lg shadow-sm border p-6">
-				<h2 class="text-lg font-semibold text-gray-900 mb-4">Answer</h2>
-				<div class="prose max-w-none text-gray-700 whitespace-pre-wrap">
-					{response.answer}
-				</div>
-			</div>
-
-			<!-- Search Stats -->
-			<div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-				<div class="flex gap-6 text-sm">
-					<div>
-						<span class="font-medium text-blue-900">Semantic Results:</span>
-						<span class="text-blue-700 ml-2">{response.semantic_count}</span>
-					</div>
-					<div>
-						<span class="font-medium text-blue-900">Graph Results:</span>
-						<span class="text-blue-700 ml-2">{response.graph_count}</span>
-					</div>
-					<div>
-						<span class="font-medium text-blue-900">Total Sources:</span>
-						<span class="text-blue-700 ml-2">{response.sources.length}</span>
-					</div>
-				</div>
-			</div>
-
-			<!-- Sources -->
-			<div class="bg-white rounded-lg shadow-sm border p-6">
-				<h2 class="text-lg font-semibold text-gray-900 mb-4">Sources</h2>
-				<div class="space-y-4">
-					{#each response.sources as source, i}
-						<div class="border-l-4 {source.source === 'semantic' ? 'border-blue-500' : 'border-green-500'} pl-4 py-2">
-							<div class="flex items-center gap-2 mb-2">
-								<span class="text-xs font-semibold uppercase px-2 py-1 rounded {source.source === 'semantic' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
-									{source.source}
-								</span>
-								<span class="text-sm font-medium text-gray-900">
-									{source.heading || source.provision_id}
-								</span>
-								<span class="text-sm text-gray-500">
-									({source.year})
-								</span>
-								{#if source.similarity}
-									<span class="text-xs text-gray-500 ml-auto">
-										{(source.similarity * 100).toFixed(1)}% match
-									</span>
-								{/if}
-							</div>
-							<p class="text-sm text-gray-700">{source.text_content.substring(0, 300)}...</p>
-						</div>
-					{/each}
-				</div>
-			</div>
-		</div>
-	{/if}
-</div>
+	</div>
+{/if}

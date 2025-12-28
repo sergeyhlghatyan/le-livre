@@ -81,3 +81,26 @@ def data_loader(data_dir):
     """Initialize SectionDataLoader with actual data directory."""
     from services.data_loader import SectionDataLoader
     return SectionDataLoader(data_dir)
+
+
+# Neo4j Test Fixture (for graph service tests)
+@pytest.fixture
+def neo4j_test_driver():
+    """Provide Neo4j driver for testing graph services."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'backend' / 'app'))
+
+    from database import get_neo4j_driver
+    return get_neo4j_driver()
+
+
+# FastAPI Test Client Fixture (for API endpoint tests)
+@pytest.fixture
+def fastapi_client():
+    """FastAPI test client for testing endpoints."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'backend'))
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+    return TestClient(app)
