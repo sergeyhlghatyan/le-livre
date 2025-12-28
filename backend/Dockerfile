@@ -1,5 +1,5 @@
 # Multi-stage build for smaller image
-FROM python:3.12-slim as builder
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -8,28 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Copy requirements and install Python dependencies globally
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Production stage
-FROM python:3.12-slim
-
-WORKDIR /app
-
-# Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app ./app
 
 # Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app && \
-    chown -R appuser:appuser /root/.local
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Expose port
