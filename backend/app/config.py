@@ -1,9 +1,7 @@
 """Application configuration."""
 from pydantic_settings import BaseSettings
-from pydantic import Field
 from functools import lru_cache
 from pathlib import Path
-import os
 
 
 class Settings(BaseSettings):
@@ -27,13 +25,6 @@ class Settings(BaseSettings):
     # API
     api_title: str = "Le Livre API"
     api_version: str = "0.1.0"
-
-    # CORS origins - configurable via environment variable
-    # In .env: CORS_ORIGINS=http://localhost:5174,http://localhost:5173
-    # In production .env: CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
-    cors_origins: list[str] = Field(
-        default_factory=lambda: os.getenv("CORS_ORIGINS", "http://localhost:5174,http://localhost:5173,http://localhost:3000").split(",")
-    )
 
     # JWT Configuration
     jwt_secret_key: str  # No default - MUST be in .env with secure value
