@@ -1,467 +1,482 @@
-# Le Livre - Docker & AWS EC2 Deployment Guide
+# Le Livre - Production Deployment Documentation
 
-This guide walks you through deploying Le Livre to AWS EC2 with Docker.
+## Overview
 
-## What Was Created
+Le Livre is deployed as a Docker-containerized application on AWS EC2 with the following components:
 
-### Phase 1: Configuration Files ✅
-- `frontend/src/lib/api.ts` - API URL now parameterized via environment variables
-- `frontend/.env` - Development environment (uses `http://localhost:8000`)
-- `frontend/.env.production` - Production environment (uses `/api` proxy)
-- `frontend/vite.config.ts` - Added proxy configuration for `/api` route
-- `backend/app/config.py` - Removed hardcoded passwords, made CORS configurable
-- `.env` - Updated with all required variables
-- `.env.production.example` - Template for production deployment
-
-### Phase 2: Docker Configuration ✅
-**Backend:**
-- `backend/Dockerfile` - Multi-stage Python build (production-optimized)
-- `backend/.dockerignore` - Excludes unnecessary files from build
-
-**Frontend:**
-- `frontend/Dockerfile` - Multi-stage Node build with SvelteKit
-- `frontend/.dockerignore` - Excludes node_modules and build artifacts
-
-**Nginx:**
-- `nginx/Dockerfile` - Alpine-based reverse proxy
-- `nginx/nginx.conf` - Complete configuration with:
-  - API routing (`/api/*` → backend)
-  - Frontend routing (`/*` → frontend)
-  - Rate limiting
-  - Health check endpoint
-  - SSL support (commented, ready to enable)
-
-### Phase 3: Docker Compose ✅
-- `docker-compose.prod.yml` - Orchestrates all 5 services:
-  - PostgreSQL (with pgvector)
-  - Neo4j (with APOC plugin)
-  - Backend API (FastAPI)
-  - Frontend (SvelteKit)
-  - Nginx (reverse proxy)
-
-### Phase 4: Deployment Scripts ✅
-All scripts are in `scripts/` directory and executable:
-
-1. **setup-ec2.sh** - Initial EC2 instance setup
-   - Installs Docker, Git, and tools
-   - Creates application directory
-   - Prepares system for deployment
-
-2. **deploy.sh** - Application deployment
-   - Validates environment configuration
-   - Builds and starts Docker containers
-   - Shows deployment status
-
-3. **init-databases.sh** - Database initialization
-   - Runs PostgreSQL schemas (pgvector, users)
-   - Runs Neo4j schema
-   - Shows how to create admin user
-
-4. **setup-ssl.sh** - HTTPS configuration
-   - Uses Let's Encrypt (certbot)
-   - Configures SSL certificates
-   - Sets up auto-renewal
-
-5. **health-check.sh** - System monitoring
-   - Container status checks
-   - Application health checks
-   - Database connectivity
-   - Resource usage
-
-6. **backup.sh** - Database backups
-   - Backs up PostgreSQL and Neo4j
-   - Compresses backups
-   - Cleans up old backups (7 day retention)
+- **Domain**: lelivre.trunorth.cloud (HTTPS enabled)
+- **Instance Type**: EC2 t3.medium (Ubuntu 22.04 LTS)
+- **Container Orchestration**: Docker Compose v5.0.0
+- **Status**: All services running and healthy
 
 ---
 
-## Deployment Steps
+## 1. Docker Compose Configuration
 
-### 1. Launch AWS EC2 Instance
+### Service Architecture
 
-**Instance Requirements:**
-- Type: `t3.medium` or larger
-- OS: Ubuntu 22.04 LTS
-- Storage: 30 GB EBS (General Purpose SSD)
-- Security Group:
-  - Port 80 (HTTP)
-  - Port 443 (HTTPS)
-  - Port 22 (SSH) - from your IP only
-
-**Optional but Recommended:**
-- Allocate Elastic IP for static public IP
-
-### 2. Initial EC2 Setup
-
-SSH into your instance and run the setup script:
-
-```bash
-# SSH to your instance
-ssh ubuntu@<your-ec2-ip>
-
-# Download setup script
-curl -O https://raw.githubusercontent.com/your-repo/main/scripts/setup-ec2.sh
-chmod +x setup-ec2.sh
-
-# Run setup
-./setup-ec2.sh
-
-# Log out and back in for Docker group changes
-exit
-ssh ubuntu@<your-ec2-ip>
+```
+┌─────────────────────────────────────────────────────┐
+│                    Nginx Reverse Proxy               │
+│              (Port 80/443, SSL Enabled)              │
+└────────────────┬──────────────────────┬──────────────┘
+                 │                      │
+        ┌────────▼────────┐     ┌───────▼─────────┐
+        │   Backend API   │     │     Frontend    │
+        │  (Port 8000)    │     │   (Port 3000)   │
+        │   FastAPI       │     │   SvelteKit     │
+        └────────┬────────┘     └─────────────────┘
+                 │
+        ┌────────┴──────────┬──────────────────┐
+        │                   │                  │
+    ┌───▼──┐          ┌──────▼────┐      ┌────▼──┐
+    │  PG  │          │   Neo4j   │      │ logs  │
+    │  5432│          │   7687    │      │       │
+    └──────┘          └───────────┘      └───────┘
 ```
 
-### 3. Clone Repository and Configure
+### Container Specifications
 
-```bash
-# Navigate to application directory
-cd ~/lelivre
+| Service | Image | Container | Port | Network | Restart Policy |
+|---------|-------|-----------|------|---------|-----------------|
+| PostgreSQL | pgvector/pgvector:pg16 | lelivre-postgres | 5432 | lelivre-net | unless-stopped |
+| Neo4j | neo4j:5.15 | lelivre-neo4j | 7687 | lelivre-net | unless-stopped |
+| Backend | Local build (Python 3.12) | lelivre-backend | 8000 | lelivre-net | unless-stopped |
+| Frontend | Local build (Node 20) | lelivre-frontend | 3000 | lelivre-net | unless-stopped |
+| Nginx | Local build (Alpine) | lelivre-nginx | 80/443 | lelivre-net | unless-stopped |
 
-# Clone your repository
-git clone <your-repo-url> .
+### Health Checks
 
-# Create production environment file
-cp .env.production.example .env
+- **PostgreSQL**: `pg_isready -U lelivre` (10s interval, 5 retries)
+- **Neo4j**: `cypher-shell -u neo4j -p <pass> 'RETURN 1'` (10s interval, 5 retries)
+- **Backend**: HTTP GET to `http://localhost:8000/` (30s interval, 3 retries, 10s startup)
+- **Frontend**: Node HTTP check on port 3000 (30s interval, 3 retries, 10s startup)
+- **Nginx**: Health endpoint check on `/health` (30s interval)
 
-# Edit with your production values
-nano .env
+### Persistent Volumes
+
+- `postgres_data:/var/lib/postgresql/data` - PostgreSQL persistent data
+- `neo4j_data:/data` - Neo4j persistent data
+- `neo4j_logs:/logs` - Neo4j logs
+- `./nginx/nginx.conf:/etc/nginx/nginx.conf:ro` - Nginx config (read-only)
+- `./nginx/ssl:/etc/nginx/ssl:ro` - SSL certificates (read-only)
+- `./nginx/logs:/var/log/nginx` - Nginx logs
+- `./data/schemas:/docker-entrypoint-initdb.d:ro` - PostgreSQL initialization schemas
+
+---
+
+## 2. Nginx Configuration
+
+### HTTP Server Block (Port 80)
+
+```nginx
+server {
+    listen 80;
+    server_name lelivre.trunorth.cloud;
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+
+    # Redirect HTTP to HTTPS
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+}
 ```
 
-**Critical values to change in `.env`:**
+### HTTPS Server Block (Port 443)
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name lelivre.trunorth.cloud;
+
+    # SSL Configuration
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # Security Headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Gzip Compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript
+               application/javascript application/json;
+}
+```
+
+### Rate Limiting
+
+- **API routes**: 10 req/s (burst: 20)
+- **General routes**: 30 req/s (burst: 50)
+
+### Routing Configuration
+
+**Backend Routing:**
+```nginx
+location /api/ {
+    rewrite ^/api/(.*) /$1 break;
+    proxy_pass http://backend;
+    # Timeouts: 60s for connect/send/read
+    # WebSocket support enabled
+}
+```
+
+**Frontend Routing:**
+```nginx
+location / {
+    proxy_pass http://frontend;
+    # WebSocket support enabled for HMR
+}
+```
+
+---
+
+## 3. SSL/TLS Certificate Setup
+
+### Certificate Details
+
+- **Location**: `/etc/nginx/ssl/` (inside nginx container)
+- **Certificate**: `fullchain.pem` (3,619 bytes)
+- **Private Key**: `privkey.pem` (1,704 bytes)
+- **Authority**: Let's Encrypt
+- **Domain**: lelivre.trunorth.cloud
+
+### Current Status
+
+- **Status**: Active and enforcing HTTPS
+- **HTTP → HTTPS redirect**: Enabled
+- **TLS Version**: 1.2 and 1.3 only
+- **HSTS**: 1 year max-age with includeSubDomains
+
+### Auto-Renewal Setup
+
+Crontab entry for automatic renewal:
 ```bash
-# Generate secure passwords (use openssl rand -base64 32)
-POSTGRES_PASSWORD=<secure-password>
-NEO4J_PASSWORD=<secure-password>
+0 3 1 * * certbot renew --quiet --deploy-hook "cd ~/lelivre && docker compose -f docker-compose.prod.yml restart nginx"
+```
 
-# Generate JWT secret (use openssl rand -hex 32)
-JWT_SECRET_KEY=<64-character-hex-string>
+---
 
-# Add your OpenAI API key
-OPENAI_API_KEY=sk-...
+## 4. Environment Variables
 
-# Update CORS origins with your domain
-CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+### Required Configuration Variables
 
-# Set environment to production
+See `.env.production.example` for a complete template with all required variables.
+
+**Critical variables:**
+- `OPENAI_API_KEY` - Required for embeddings and chat functionality
+- `POSTGRES_PASSWORD` - Must be changed from default
+- `NEO4J_PASSWORD` - Must be changed from default
+- `JWT_SECRET_KEY` - Generate with `openssl rand -hex 32`
+- `ENVIRONMENT` - Set to "production" in production
+
+### Development vs. Production Differences
+
+**Development (.env):**
+```bash
+VITE_API_BASE_URL=http://localhost:8000
+ENVIRONMENT=development
+```
+
+**Production (.env):**
+```bash
+VITE_API_BASE_URL=/api
 ENVIRONMENT=production
 ```
 
-### 4. Deploy Application
+---
 
-```bash
-# Make deploy script executable (if not already)
-chmod +x scripts/deploy.sh
+## 5. Dockerfile Configurations
 
-# Run deployment
-./scripts/deploy.sh
-```
+### Backend Dockerfile
 
-This will:
-- Build all Docker images
-- Start all containers
-- Show service status
+**Location**: `backend/Dockerfile`
 
-### 5. Initialize Databases
+**Key Features:**
+- Python 3.12 slim base image
+- Non-root user for security (UID 1000)
+- Health check included
+- Global package installation (no virtual environment needed)
+- Current image size: 849 MB
 
-**First time only:**
+### Frontend Dockerfile
 
-```bash
-# Run database initialization
-./scripts/init-databases.sh
-```
+**Location**: `frontend/Dockerfile`
 
-**Create admin user:**
+**Key Features:**
+- Multi-stage build (builder + production)
+- Node 20 Alpine base
+- Non-root user for security (UID 1000)
+- Health check included
+- Current image size: 428 MB (optimized)
 
-```bash
-# Use Python to hash password and create user
-docker exec lelivre-backend python << 'EOF'
-import bcrypt
-import psycopg
-from app.config import get_settings
+### Nginx Dockerfile
 
-settings = get_settings()
-hashed_pw = bcrypt.hashpw(b"your_secure_password", bcrypt.gensalt()).decode()
+**Location**: `nginx/Dockerfile`
 
-conn = psycopg.connect(
-    host=settings.postgres_host,
-    port=settings.postgres_port,
-    dbname=settings.postgres_db,
-    user=settings.postgres_user,
-    password=settings.postgres_password
-)
-cur = conn.cursor()
-cur.execute(
-    "INSERT INTO users (email, hashed_password, is_superuser) VALUES (%s, %s, %s)",
-    ("admin@lelivre.com", hashed_pw, True)
-)
-conn.commit()
-print("Admin user created!")
-EOF
-```
-
-### 6. Configure Domain (Optional)
-
-**DNS Setup:**
-
-In your domain registrar, create:
-```
-Type: A
-Name: @ (or lelivre)
-Value: <your-ec2-elastic-ip>
-TTL: 300
-
-Type: CNAME
-Name: www
-Value: lelivre.yourdomain.com
-TTL: 300
-```
-
-Wait for DNS propagation (5-30 minutes).
-
-### 7. Set Up HTTPS (Optional but Recommended)
-
-```bash
-# Run SSL setup script with your domain
-./scripts/setup-ssl.sh lelivre.yourdomain.com admin@yourdomain.com
-
-# Follow the prompts to update nginx.conf
-# Then the script will restart nginx with SSL
-```
-
-**After SSL setup:**
-1. Edit `nginx/nginx.conf`
-2. Uncomment the HTTPS server block
-3. Update `server_name` with your domain
-4. Uncomment the HTTP to HTTPS redirect
-5. Restart nginx: `docker compose -f docker-compose.prod.yml restart nginx`
-
-**Set up auto-renewal:**
-
-```bash
-# Add to crontab
-sudo crontab -e
-
-# Add this line:
-0 3 1 * * certbot renew --quiet --deploy-hook "cd /home/ubuntu/lelivre && docker compose -f docker-compose.prod.yml restart nginx"
-```
-
-### 8. Verify Deployment
-
-```bash
-# Run health check
-./scripts/health-check.sh
-
-# Check logs
-docker compose -f docker-compose.prod.yml logs -f
-
-# Test the application
-curl http://<your-ec2-ip>/health
-```
-
-Visit your application:
-- HTTP: `http://<your-ec2-ip>`
-- HTTPS (if configured): `https://yourdomain.com`
+**Key Features:**
+- Nginx Alpine base
+- Minimal configuration
+- Health check included
+- Current image size: 81.2 MB
 
 ---
 
-## Maintenance
+## 6. Database Schemas
 
-### Daily Backups
+### PostgreSQL Schema
 
-Set up automatic daily backups:
+**Main Table**: `provision_embeddings`
+- Stores provision text with vector embeddings (1536 dimensions)
+- Unique constraint on (provision_id, year)
+- Indexes for vector similarity search and hierarchical queries
 
-```bash
-# Add to crontab
-crontab -e
+**Additional Tables**:
+- `definition_usages` - Tracks definition references between provisions
+- `users` - User authentication and authorization
 
-# Add this line (runs at 3 AM daily):
-0 3 * * * cd /home/ubuntu/lelivre && ./scripts/backup.sh >> /var/log/lelivre-backup.log 2>&1
-```
+**Schema Files**: `data/schemas/pgvector.sql`, `data/schemas/users.sql`
 
-Manual backup:
-```bash
-./scripts/backup.sh
-```
+### Neo4j Schema
 
-Backups are stored in `~/backups/` by default.
+**Node Types**:
+- `Section` - Represents USC sections
+- `Provision` - Represents individual provisions
 
-### Monitoring
+**Relationship Types**:
+- `PARENT_OF` - Hierarchical structure
+- `REFERENCES` - Cross-references between provisions
+- `CONTAINS` - Section containment
+- `AMENDED_FROM` - Temporal changes (Phase 0)
+- `USES_DEFINITION` - Definition usage (Phase 0)
+- `SEMANTICALLY_SIMILAR` - AI-discovered similarity (Phase 0)
 
-Run regular health checks:
-```bash
-./scripts/health-check.sh
-```
-
-Check application logs:
-```bash
-# All services
-docker compose -f docker-compose.prod.yml logs -f
-
-# Specific service
-docker compose -f docker-compose.prod.yml logs -f backend
-docker compose -f docker-compose.prod.yml logs -f frontend
-```
-
-### Updates
-
-To deploy code updates:
-
-```bash
-# Pull latest code
-git pull origin main
-
-# Redeploy (rebuilds containers)
-./scripts/deploy.sh
-```
-
-### Restart Services
-
-```bash
-# Restart all services
-docker compose -f docker-compose.prod.yml restart
-
-# Restart specific service
-docker compose -f docker-compose.prod.yml restart backend
-docker compose -f docker-compose.prod.yml restart frontend
-docker compose -f docker-compose.prod.yml restart nginx
-```
-
-### Stop Services
-
-```bash
-# Stop all services
-docker compose -f docker-compose.prod.yml down
-
-# Stop and remove volumes (⚠️ deletes data)
-docker compose -f docker-compose.prod.yml down -v
-```
+**Schema File**: `data/schemas/neo4j.cypher`
 
 ---
 
-## Troubleshooting
+## 7. Deployment Scripts
+
+All scripts located in `scripts/` directory:
+
+### 1. setup-ec2.sh
+Initial EC2 instance setup - installs Docker, Git, and configures system
+
+### 2. deploy.sh
+Application deployment and updates - builds containers and starts services
+
+### 3. init-databases.sh
+One-time database initialization - creates schemas and provides admin user instructions
+
+### 4. setup-ssl.sh
+HTTPS certificate setup with Let's Encrypt - usage: `./scripts/setup-ssl.sh domain email`
+
+### 5. health-check.sh
+System health monitoring - checks containers, databases, disk space, and logs
+
+### 6. backup.sh
+Database backup automation - backs up both PostgreSQL and Neo4j with 7-day retention
+
+---
+
+## 8. System Information
+
+### EC2 Instance
+
+- **OS**: Ubuntu 22.04 LTS (Linux kernel 6.8.0-1040-aws)
+- **Instance Type**: t3.medium
+- **Docker**: 29.1.3
+- **Docker Compose**: 5.0.0
+- **Architecture**: x86_64
+
+### Docker Images
+
+| Image | Tag | Size |
+|-------|-----|------|
+| lelivre-backend | latest | 849 MB |
+| lelivre-frontend | latest | 428 MB |
+| lelivre-nginx | latest | 81.2 MB |
+| pgvector/pgvector | pg16 | 723 MB |
+| neo4j | 5.15 | 799 MB |
+
+---
+
+## 9. Security Configuration
+
+### Security Headers (Nginx)
+
+```nginx
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
+```
+
+### Best Practices
+
+- SSL certificates stored in nginx/ssl/ (gitignored)
+- All containers run as non-root users
+- Environment variables separated from code
+- Rate limiting enabled on all endpoints
+- Database passwords required to be changed from defaults
+- JWT secrets must be generated uniquely
+
+---
+
+## 10. Local Development Setup
+
+### Development Files
+
+- `docker-compose.yml` - Local development databases only
+- `start.sh` - Starts backend (uvicorn) and frontend (Vite) with auto-reload
+- `stop.sh` - Stops development servers
+
+### Development URLs
+
+- Frontend: http://localhost:5174
+- Backend API: http://localhost:8000
+- PostgreSQL: localhost:5432
+- Neo4j Browser: http://localhost:7474
+
+---
+
+## 11. Deployment Checklist
+
+### Pre-Deployment Security
+
+- [ ] Change all default passwords in `.env`
+- [ ] Generate new JWT secret with `openssl rand -hex 32`
+- [ ] Set ENVIRONMENT=production
+- [ ] Verify OPENAI_API_KEY is valid
+- [ ] Review nginx.conf for correct domain name
+
+### Deployment Steps
+
+1. [ ] Clone repository to EC2
+2. [ ] Create `.env` from `.env.production.example`
+3. [ ] Update `.env` with production values
+4. [ ] Run `./scripts/deploy.sh`
+5. [ ] Run `./scripts/init-databases.sh` (first time only)
+6. [ ] Create admin user
+7. [ ] Configure DNS records (A record pointing to EC2 IP)
+8. [ ] Run `./scripts/setup-ssl.sh domain email`
+9. [ ] Verify nginx HTTPS configuration
+10. [ ] Run `./scripts/health-check.sh`
+11. [ ] Test HTTPS access
+12. [ ] Set up backup automation in crontab
+
+### Maintenance
+
+- Daily backups (automated via crontab)
+- Weekly health checks
+- Monthly certificate renewal verification
+- Monitor disk space (30GB allocation)
+- Review logs for errors
+
+---
+
+## 12. Cost Estimates (AWS)
+
+### Current Setup
+
+- EC2 t3.medium: ~$30/month
+- EBS 30GB (gp2): ~$3/month
+- Data transfer: ~$1-5/month
+- **Total**: ~$35-40/month
+
+### For Higher Traffic
+
+- EC2 t3.large: ~$60/month
+- RDS PostgreSQL: ~$30/month
+- Application Load Balancer: ~$16/month
+- **Total**: ~$106+/month
+
+---
+
+## 13. Access Information
+
+- **Public URL**: https://lelivre.trunorth.cloud
+- **EC2 IP**: 3.88.211.81
+- **SSH Access**: `ssh -i ~/dev/ocean/pem/legail-key.pem ubuntu@3.88.211.81`
+- **Neo4j Browser**: Not exposed externally (internal Docker network only)
+- **PostgreSQL**: Not exposed externally (internal Docker network only)
+
+---
+
+## 14. Troubleshooting
 
 ### Container Won't Start
 
-Check logs:
 ```bash
-docker compose -f docker-compose.prod.yml logs <service-name>
-```
+# Check container logs
+docker compose -f docker-compose.prod.yml logs --tail=50 <service-name>
 
-Rebuild container:
-```bash
+# Restart specific service
+docker compose -f docker-compose.prod.yml restart <service-name>
+
+# Rebuild and restart
 docker compose -f docker-compose.prod.yml up -d --build <service-name>
-```
-
-### Database Connection Issues
-
-Check database health:
-```bash
-# PostgreSQL
-docker exec lelivre-postgres pg_isready -U lelivre
-
-# Neo4j
-docker exec lelivre-neo4j cypher-shell -u neo4j -p <password> "RETURN 1"
-```
-
-### Frontend Not Accessible
-
-Check nginx logs:
-```bash
-docker compose -f docker-compose.prod.yml logs nginx
-```
-
-Verify nginx config:
-```bash
-docker exec lelivre-nginx nginx -t
 ```
 
 ### SSL Certificate Issues
 
-Check certificate status:
 ```bash
-sudo certbot certificates
+# Verify certificate files exist
+ls -l nginx/ssl/
+
+# Test certificate manually
+openssl s_client -connect lelivre.trunorth.cloud:443
+
+# Renew certificate manually
+sudo certbot renew
 ```
 
-Manually renew:
+### Database Connection Issues
+
 ```bash
-sudo certbot renew
+# Check PostgreSQL
+docker exec lelivre-postgres pg_isready -U lelivre
+
+# Check Neo4j
+docker exec lelivre-neo4j cypher-shell -u neo4j -p <password> 'RETURN 1'
 ```
 
 ### Out of Disk Space
 
-Check disk usage:
 ```bash
+# Check disk usage
 df -h
+
+# Clean up Docker
+docker system prune -af --volumes
+
+# Check Docker disk usage
 docker system df
 ```
 
-Clean up Docker:
-```bash
-# Remove unused images
-docker image prune -a
-
-# Remove unused volumes (⚠️ be careful)
-docker volume prune
-
-# Full cleanup (⚠️ removes everything not in use)
-docker system prune -a --volumes
-```
-
 ---
 
-## Cost Estimates (AWS)
+## 15. References
 
-**Monthly costs:**
-- EC2 t3.medium: ~$30/month
-- EBS 30GB: ~$3/month
-- Data transfer: ~$1-5/month
-- **Total: ~$35-40/month**
-
-**For higher traffic:**
-- EC2 t3.large: ~$60/month
-- Application Load Balancer: ~$16/month
-- RDS for PostgreSQL: ~$30/month
-
----
-
-## Security Checklist
-
-- [ ] Changed all default passwords in `.env`
-- [ ] Generated secure JWT secret
-- [ ] Updated CORS origins to production domain
-- [ ] Configured SSL/HTTPS
-- [ ] Restricted SSH access to your IP only
-- [ ] Set up automatic backups
-- [ ] Enabled SSL auto-renewal
-- [ ] Verified health checks pass
-- [ ] Tested login with admin account
-
----
-
-## Architecture Overview
-
-```
-Internet
-    ↓
-Domain (yourdomain.com)
-    ↓
-AWS EC2 Instance
-    ↓
-Nginx (Port 80/443)
-    ├── /api/* → Backend (Port 8000)
-    └── /* → Frontend (Port 3000)
-         ↓
-    PostgreSQL (Port 5432)
-    Neo4j (Port 7687)
-```
-
-All services run in Docker containers on a single EC2 instance, orchestrated by Docker Compose.
-
----
-
-## Support
-
-For issues or questions:
-1. Check logs: `./scripts/health-check.sh`
-2. Review troubleshooting section above
-3. Check GitHub issues: [your-repo-url/issues]
+- **Docker Compose**: `docker-compose.prod.yml`
+- **Nginx Config**: `nginx/nginx.conf`
+- **PostgreSQL Schema**: `data/schemas/pgvector.sql`
+- **Neo4j Schema**: `data/schemas/neo4j.cypher`
+- **Deployment Scripts**: `scripts/`
+- **Environment Template**: `.env.production.example`
+- **Project Documentation**: `CLAUDE.md`
+- **Deployment Issues**: `DEPLOYMENT_ISSUES.md`

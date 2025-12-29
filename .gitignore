@@ -34,10 +34,15 @@ htmlcov/
 *~
 .DS_Store
 
-# Environment
+# SSL certificates and keys
+nginx/ssl/
+nginx/*.backup
+
+# Environment (but keep .env.production.example)
 .env
 .env.local
 .env.*.local
+.env.production
 
 # Node.js / Frontend
 node_modules/
@@ -48,6 +53,10 @@ frontend/.svelte-kit/
 .netlify
 package-lock.json
 frontend/package-lock.json
+
+# Test results
+frontend/test-results/
+frontend/playwright-report/
 
 # Generated data (keep raw data)
 data/sections/
