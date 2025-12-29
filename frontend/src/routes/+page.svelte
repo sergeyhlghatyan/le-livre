@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
 	import { auth } from '$lib/stores/auth.svelte';
 
 	// Auth guard - redirect to login if not authenticated
-	onMount(() => {
-		if (!auth.isAuthenticated && !auth.loading) {
+	$effect(() => {
+		// Redirect when loading completes and user is not authenticated
+		if (!auth.loading && !auth.isAuthenticated) {
 			goto('/login');
 		}
 	});

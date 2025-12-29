@@ -15,12 +15,20 @@
 
 	// State
 	let isHovering = $state(false);
-	let previewData = $state<{ heading: string; text: string } | null>(null);
+	let previewData = $state<{ heading: string; text: string; isContainer?: boolean } | null>(null);
 	let isLoadingPreview = $state(false);
 	let hoverTimeout: number | null = null;
 
 	// Computed
 	const targetInfo = $derived(getProvisionIdFromReference(reference, currentYear));
+
+	/**
+	 * Extract section number from provision ID for display
+	 */
+	function extractSectionFromProvisionId(provisionId: string): string {
+		const match = provisionId.match(/s(\d+)/);
+		return match ? `Section ${match[1]}` : provisionId;
+	}
 
 	/**
 	 * Handle mouse enter - start debounced preview fetch
@@ -69,11 +77,25 @@
 			if (isHovering) {
 				previewData = {
 					heading: data.heading,
-					text: data.text_content.slice(0, 200)
+					text: data.text_content.slice(0, 200),
+					isContainer: false
 				};
 			}
 		} catch (error: any) {
-			console.error('Failed to fetch provision preview:', error);
+			// Handle 404 gracefully - provision might be a parent-only container
+			if (error.message?.includes('Provision not found (404)')) {
+				// Show fallback message for container provisions
+				if (isHovering) {
+					previewData = {
+						heading: extractSectionFromProvisionId(targetInfo.provisionId),
+						text: 'This section has no text content. It may contain child provisions.',
+						isContainer: true
+					};
+				}
+			} else {
+				// Only log non-404 errors
+				console.error('Failed to fetch provision preview:', error);
+			}
 		} finally {
 			isLoadingPreview = false;
 		}
@@ -127,12 +149,14 @@
 					<div class="font-semibold text-sm text-gray-900 dark:text-gray-100">
 						{previewData.heading}
 					</div>
-					<div class="text-xs text-gray-600 dark:text-gray-300 line-clamp-4">
+					<div class="text-xs {previewData.isContainer ? 'italic text-gray-500 dark:text-gray-400' : 'text-gray-600 dark:text-gray-300'} line-clamp-4">
 						{previewData.text}
 					</div>
-					<div class="text-xs text-blue-600 dark:text-blue-400 font-medium">
-						Click to navigate →
-					</div>
+					{#if !previewData.isContainer}
+						<div class="text-xs text-blue-600 dark:text-blue-400 font-medium">
+							Click to navigate →
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>

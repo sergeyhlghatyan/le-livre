@@ -20,6 +20,10 @@
 
 	const availableYears = [1994, 2000, 2006, 2013, 2018, 2022, 2024];
 
+	// Derived reactive lists for dropdown options
+	const validFromYears = $derived(availableYears.filter(y => y < compareToYear));
+	const validToYears = $derived(availableYears.filter(y => y > compareFromYear));
+
 	onMount(() => {
 		// Auto-load diff if initial years provided
 		if (initialFromYear && initialToYear) {
@@ -74,7 +78,7 @@
 					bind:value={compareFromYear}
 					class="w-full px-4 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50"
 				>
-					{#each availableYears.filter(y => y < compareToYear) as year}
+					{#each validFromYears as year}
 						<option value={year}>{year}</option>
 					{/each}
 				</select>
@@ -89,7 +93,7 @@
 					bind:value={compareToYear}
 					class="w-full px-4 py-2 rounded border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-50"
 				>
-					{#each availableYears.filter(y => y > compareFromYear) as year}
+					{#each validToYears as year}
 						<option value={year}>{year}</option>
 					{/each}
 				</select>
@@ -115,27 +119,27 @@
 	</div>
 
 	<!-- Diff results -->
-	{#if diffData}
+	{#if diffData && diffData.hierarchy_diff}
 		<div class="bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700 p-6">
 			<div class="flex items-center justify-between mb-6">
 				<h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
 					Changes: {compareFromYear} → {compareToYear}
 				</h2>
 
-				{#if diffData.status}
+				{#if diffData.hierarchy_diff.status}
 					<span class="px-3 py-1 rounded-full text-sm font-medium
-						{diffData.status === 'modified' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
-						diffData.status === 'added' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-						diffData.status === 'removed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
+						{diffData.hierarchy_diff.status === 'modified' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
+						diffData.hierarchy_diff.status === 'added' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+						diffData.hierarchy_diff.status === 'removed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
 						'bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-400'}"
 					>
-						{diffData.status}
+						{diffData.hierarchy_diff.status}
 					</span>
 				{/if}
 			</div>
 
 			<!-- Diff visualization -->
-			{#if diffData.status === 'unchanged'}
+			{#if diffData.hierarchy_diff.status === 'unchanged'}
 				<div class="p-6 bg-neutral-50 dark:bg-neutral-900 rounded text-center">
 					<svg class="w-12 h-12 mx-auto text-neutral-400 dark:text-neutral-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -144,59 +148,39 @@
 						No changes between {compareFromYear} and {compareToYear}
 					</p>
 				</div>
-			{:else if diffData.status === 'added'}
+			{:else if diffData.hierarchy_diff.status === 'added'}
 				<div class="p-6 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-800">
 					<p class="text-sm text-green-900 dark:text-green-100 mb-3">
 						This provision was added in {compareToYear}
 					</p>
 					<div class="prose dark:prose-invert max-w-none">
-						<p class="text-neutral-900 dark:text-neutral-50">{diffData.new_text}</p>
+						<p class="text-neutral-900 dark:text-neutral-50">{diffData.hierarchy_diff.new_text}</p>
 					</div>
 				</div>
-			{:else if diffData.status === 'removed'}
+			{:else if diffData.hierarchy_diff.status === 'removed'}
 				<div class="p-6 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
 					<p class="text-sm text-red-900 dark:text-red-100 mb-3">
 						This provision was removed in {compareToYear}
 					</p>
 					<div class="prose dark:prose-invert max-w-none">
-						<p class="text-neutral-900 dark:text-neutral-50 line-through">{diffData.old_text}</p>
+						<p class="text-neutral-900 dark:text-neutral-50 line-through">{diffData.hierarchy_diff.old_text}</p>
 					</div>
 				</div>
-			{:else if diffData.inline_diff && diffData.inline_diff.length > 0}
+			{:else if diffData.hierarchy_diff.inline_diff?.sentence}
 				<!-- Inline diff with highlights -->
 				<div class="p-6 bg-neutral-50 dark:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-700">
-					<InlineDiff parts={diffData.inline_diff} />
-				</div>
-			{/if}
-
-			<!-- Change statistics -->
-			{#if diffData.status === 'modified' && (diffData.additions !== undefined || diffData.deletions !== undefined)}
-				<div class="mt-6 grid grid-cols-2 gap-4">
-					{#if diffData.additions !== undefined}
-						<div class="p-4 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-800">
-							<p class="text-sm text-green-900 dark:text-green-100 font-medium">
-								+{diffData.additions} additions
-							</p>
-						</div>
-					{/if}
-					{#if diffData.deletions !== undefined}
-						<div class="p-4 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
-							<p class="text-sm text-red-900 dark:text-red-100 font-medium">
-								-{diffData.deletions} deletions
-							</p>
-						</div>
-					{/if}
+					<InlineDiff parts={diffData.hierarchy_diff.inline_diff.sentence} />
 				</div>
 			{/if}
 
 			<!-- Nested changes (if hierarchical) -->
-			{#if diffData.children && diffData.children.length > 0}
+			{#if diffData.hierarchy_diff.children && diffData.hierarchy_diff.children.length > 0}
 				<div class="mt-6">
 					<h3 class="text-sm font-semibold text-neutral-900 dark:text-neutral-50 mb-3">
-						Changes in Child Provisions ({diffData.children.length})
+						Changes in Child Provisions ({diffData.hierarchy_diff.children.length})
 					</h3>
 					<div class="space-y-2">
-						{#each diffData.children as child}
+						{#each diffData.hierarchy_diff.children as child}
 							<div class="p-4 bg-neutral-50 dark:bg-neutral-900 rounded border border-neutral-200 dark:border-neutral-700">
 								<div class="flex items-center justify-between mb-2">
 									<span class="text-xs font-mono text-neutral-500 dark:text-neutral-400">
@@ -211,8 +195,8 @@
 										{child.status}
 									</span>
 								</div>
-								{#if child.inline_diff && child.inline_diff.length > 0}
-									<InlineDiff parts={child.inline_diff} />
+								{#if child.inline_diff?.sentence}
+									<InlineDiff parts={child.inline_diff.sentence} />
 								{/if}
 							</div>
 						{/each}

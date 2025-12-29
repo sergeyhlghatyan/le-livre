@@ -140,11 +140,22 @@ def _get_relations(provision_id: str, year: int) -> Dict[str, Any]:
                 'referenced_by': []
             }
 
-        # Convert Neo4j nodes to dicts
+        # Convert Neo4j nodes to dicts with proper field mapping
         def node_to_dict(node):
             if node is None:
                 return None
-            return dict(node)
+
+            # Map Neo4j property names to frontend expected names
+            node_dict = dict(node)
+            return {
+                'provision_id': node_dict.get('id'),
+                'section_num': node_dict.get('section_num'),
+                'year': node_dict.get('year'),
+                'provision_level': node_dict.get('level'),
+                'provision_num': node_dict.get('num'),
+                'text_content': node_dict.get('text', ''),
+                'heading': node_dict.get('heading')
+            }
 
         return {
             'parent': node_to_dict(record['parent']),
@@ -255,7 +266,7 @@ def _get_similar_provisions(provision_id: str, year: int, limit: int = 10) -> Li
             similar.append({
                 'provision_id': record['provision_id'],
                 'heading': record['heading'],
-                'text': record['text'],
+                'text_content': record['text'],
                 'similarity_score': record['similarity_score']
             })
 

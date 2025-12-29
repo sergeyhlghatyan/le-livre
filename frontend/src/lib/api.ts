@@ -84,7 +84,8 @@ export interface HierarchyNode {
 	old_text?: string;
 	new_text?: string;
 	inline_diff?: {
-		[key: string]: InlineDiffPart[];  // Only contains the requested granularity
+		sentence?: InlineDiffPart[];  // Sentence-level diff
+		word?: InlineDiffPart[];  // Word-level diff (when requested)
 	};
 	children: HierarchyNode[];
 }
@@ -155,7 +156,9 @@ export interface DefinitionsData {
 }
 
 export interface SimilarProvisionData {
-	provision: Provision;
+	provision_id: string;
+	heading?: string;
+	text_content: string;
 	similarity_score: number;      // 0.0 - 1.0 cosine similarity
 }
 
@@ -397,6 +400,10 @@ export const api = {
 		);
 
 		if (!response.ok) {
+			// Throw error with status code for better error handling
+			if (response.status === 404) {
+				throw new Error(`Provision not found (404): ${provisionId} in year ${year}`);
+			}
 			throw new Error(`Failed to get provision preview: ${response.statusText}`);
 		}
 
