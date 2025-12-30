@@ -37,10 +37,10 @@ except ImportError:
 
 
 # Regex patterns for definition extraction
+# Database uses Unicode curly quotes: " (U+201C) and " (U+201D)
 DEFINITION_PATTERNS = [
-    r'[tT]he term ["\']([^"\']+)["\'] means',
-    r'["\']([^"\']+)["\'] means',
-    r'[aA]s used in this (?:section|chapter|title)[,\s]+["\']([^"\']+)["\']',
+    r'[tT]he term [\u201c\u201d]([^\u201c\u201d]+)[\u201c\u201d] means',
+    r'[fF]or purposes of this (?:section|subsection|paragraph)[,\s]+the term [\u201c\u201d]([^\u201c\u201d]+)[\u201c\u201d]',
 ]
 
 
@@ -147,29 +147,48 @@ def extract_terms_from_text(text: str) -> List[str]:
     return terms
 
 
-def extract_definitions(section_num: str = '921', year: int = 2024) -> Dict[str, str]:
+def extract_definitions(section_num: str = '922', year: int = 2024) -> Dict[str, str]:
     """
-    Extract all definitions from a section (default §921).
+    Find definition provisions by querying database for provisions containing
+    definition patterns, then extract the term from each.
 
     Args:
-        section_num: Section containing definitions (default '921')
+        section_num: Section to search (default '922')
         year: Year to extract from (default 2024)
 
     Returns:
         Dict mapping term -> provision_id
     """
-    print(f"\n📖 Extracting definitions from §{section_num} ({year})...\n")
+    print(f"\n📖 Finding definition provisions in §{section_num} ({year})...\n")
 
-    provisions = get_section_provisions(section_num, year)
+    conn = get_postgres_connection()
+    cursor = conn.cursor()
+
+    # Query for provisions that contain definition patterns
+    cursor.execute("""
+        SELECT provision_id, text_content, heading
+        FROM provision_embeddings
+        WHERE section_num = %s AND year = %s
+          AND (text_content ILIKE '%%the term%%means%%'
+               OR text_content ILIKE '%%for purposes of%%the term%%')
+        ORDER BY provision_id
+    """, (section_num, year))
+
     definitions = {}
 
-    for prov in provisions:
-        text = prov['text_content']
+    for row in cursor.fetchall():
+        provision_id = row[0]
+        text = row[1]
+
+        # Extract term from this provision's text
         terms = extract_terms_from_text(text)
 
         for term in terms:
-            definitions[term] = prov['provision_id']
-            print(f"  Found: '{term}' in {prov['provision_id']}")
+            definitions[term] = provision_id
+            print(f"  ✓ Found: '{term}' in {provision_id}")
+
+    cursor.close()
+    conn.close()
 
     print(f"\n✅ Extracted {len(definitions)} definitions\n")
 
@@ -385,8 +404,8 @@ if __name__ == "__main__":
     print("DEFINITION EXTRACTION PIPELINE")
     print("="*60)
 
-    # Extract definitions from §921
-    definitions = extract_definitions(section_num='921', year=2024)
+    # Extract definitions from §922 (§921 not available in database)
+    definitions = extract_definitions(section_num='922', year=2024)
 
     if not definitions:
         print("⚠️  No definitions found. Exiting.")

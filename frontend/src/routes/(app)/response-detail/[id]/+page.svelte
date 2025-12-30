@@ -2,8 +2,8 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, type ProvisionContext, type GraphResponse } from '$lib/api';
-	import GraphVisualization from '$lib/components/GraphVisualization.svelte';
+	import { api, type ProvisionContext } from '$lib/api';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
 
 	// Auth guard
@@ -22,7 +22,6 @@
 
 	// Data to load
 	let context = $state<ProvisionContext | null>(null);
-	let graph = $state<GraphResponse | null>(null);
 	let compareYearOld = $state(2018);
 	let compareYearNew = $state(2024);
 	let comparisonData = $state<any>(null);
@@ -37,9 +36,6 @@
 		try {
 			// Load provision context
 			context = await api.getProvisionContext(provisionId, year);
-
-			// Load graph visualization data
-			graph = await api.getGraph(provisionId, year);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load provision details';
 		} finally {
@@ -247,14 +243,15 @@
 							<h2 class="text-lg font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
 								Provision Relationship Graph
 							</h2>
-							{#if graph}
-								<p class="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
-									Interactive visualization showing {graph.nodes.length} related provisions and {graph.edges.length} relationships.
-								</p>
-								<GraphVisualization {graph} centerNode={provisionId} />
-							{:else}
-								<p class="text-sm text-neutral-500">No graph data available.</p>
-							{/if}
+							<p class="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
+								View an interactive graph visualization showing relationships between provisions.
+							</p>
+							<Button
+								variant="primary"
+								onclick={() => goto(`/graph?provision=${encodeURIComponent(provisionId)}&year=${year}`)}
+							>
+								Open Graph Visualization
+							</Button>
 						</div>
 					</section>
 				{/if}

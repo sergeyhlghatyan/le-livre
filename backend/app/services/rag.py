@@ -1,10 +1,14 @@
 """RAG service for semantic and graph-based search."""
 from typing import List, Dict, Any
 import time
+import re
+import logging
 import openai
 from openai import OpenAIError
 from ..database import get_postgres_conn, get_neo4j_driver
 from ..config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 openai.api_key = settings.openai_api_key
@@ -322,6 +326,35 @@ def hybrid_search(query: str, limit: int = 5, year: int = None, graph_entry_poin
     }
 
 
+def build_citation_from_id(provision_id: str, section_num: str) -> str:
+    """
+    Convert provision_id to readable citation format.
+
+    Examples:
+        /us/usc/t18/s922/a → [§922(a)]
+        /us/usc/t18/s922/d/1 → [§922(d)(1)]
+        /us/usc/t18/s922/g/8/B → [§922(g)(8)(B)]
+
+    Args:
+        provision_id: Full provision ID path (e.g., "/us/usc/t18/s922/d/1")
+        section_num: Section number (e.g., "922")
+
+    Returns:
+        Formatted citation string (e.g., "[§922(d)(1)]")
+    """
+    # Extract provision path after section number
+    parts = provision_id.split(f"/s{section_num}/")
+    if len(parts) == 2:
+        provision_path = parts[1]
+        # Format as (a), (a)(1), (a)(1)(A), etc.
+        subsections = provision_path.split('/')
+        formatted = ''.join([f"({s})" for s in subsections])
+        return f"[§{section_num}{formatted}]"
+    else:
+        # Fallback to just section
+        return f"[§{section_num}]"
+
+
 def prepare_context_for_llm(results: List[Dict[str, Any]], max_tokens: int = 4000) -> str:
     """
     Intelligently prepare context from search results.
@@ -342,19 +375,23 @@ def prepare_context_for_llm(results: List[Dict[str, Any]], max_tokens: int = 400
 
     for result in results:
         similarity = result.get('similarity', 0)
-        provision_num = result.get('provision_num', '')
+        provision_id = result.get('provision_id', '')
+        section_num = result.get('section_num', '')
         heading = result.get('heading', '')
         text_content = result.get('text_content', '')
 
+        # Build proper citation format (e.g., [§922(d)(1)])
+        citation = build_citation_from_id(provision_id, section_num)
+
         if similarity > 0.8:
             # High match - include full text
-            context = f"[{provision_num}] {heading}\n{text_content}"
+            context = f"{citation} {heading}\n{text_content}"
         elif similarity > 0.5 or result.get('relationship'):
             # Medium match or graph result - include partial text
-            context = f"[{provision_num}] {heading}\n{text_content[:500]}..."
+            context = f"{citation} {heading}\n{text_content[:500]}..."
         else:
             # Low match - just heading and snippet
-            context = f"[{provision_num}] {heading}\n{text_content[:200]}..."
+            context = f"{citation} {heading}\n{text_content[:200]}..."
 
         context_parts.append(context)
 
@@ -390,6 +427,41 @@ def format_response_with_highlighting(answer: str) -> str:
     return formatted
 
 
+def validate_citations(answer: str, context_results: List[Dict]) -> bool:
+    """
+    Check if LLM answer only cites provisions from context.
+
+    Args:
+        answer: LLM-generated answer text
+        context_results: List of provision results that were in context
+
+    Returns:
+        True if all citations are valid, False if hallucination detected
+    """
+    # Extract all citations from answer (e.g., §922(d)(1))
+    answer_citations = set(re.findall(r'§\d+\([a-zA-Z0-9)(]+\)', answer))
+
+    # Extract all valid citations from context
+    valid_citations = set()
+    for result in context_results:
+        provision_id = result.get('provision_id', '')
+        section_num = result.get('section_num', '')
+        citation = build_citation_from_id(provision_id, section_num)
+        # Extract just §922(d)(1) part from [§922(d)(1)]
+        clean_citation = citation.strip('[]')
+        valid_citations.add(clean_citation)
+
+    # Check for hallucinated citations
+    hallucinated = answer_citations - valid_citations
+
+    if hallucinated:
+        logger.warning(f"Hallucinated citations detected: {hallucinated}")
+        logger.warning(f"Valid citations were: {valid_citations}")
+        return False
+
+    return True
+
+
 def generate_rag_response(query: str, context_results: List[Dict[str, Any]]) -> str:
     """
     Generate LLM response using RAG context.
@@ -411,16 +483,27 @@ def generate_rag_response(query: str, context_results: List[Dict[str, Any]]) -> 
     # Generate response with OpenAI (with retry logic)
     system_prompt = """You are a legal research assistant for US firearms law (18 USC Ch. 44).
 
-CRITICAL: Only answer using the provided context provisions below. If no provisions are provided, respond: "I don't have enough information to answer that question."
+CRITICAL ANTI-HALLUCINATION RULES:
+• Only answer using provisions EXPLICITLY provided in the context below
+• DO NOT infer, assume, or reference provisions not in the context
+• If the provided provisions don't answer the question, say: "The provided provisions don't directly answer this question. I would need provisions about [topic] to answer accurately."
+• ONLY cite provisions using the EXACT citation format shown in the context (e.g., [§922(d)(1)])
+• DO NOT make up provision numbers or cite provisions that aren't in the context
 
-Answer concisely using the provided provisions. Follow these rules:
-• Cite provisions: "According to §922(a)(1)..." or "§922(d) prohibits..."
-• **Bold** key terms and critical requirements
-• Quote exact statutory text when relevant
+ANSWER GUIDELINES:
+• For "who can buy" questions: Focus on PROHIBITIONS (who CANNOT buy/possess)
+• Be explicit: "The law prohibits these categories from purchasing firearms..."
+• Recognize when provisions are about SELLERS vs BUYERS and clarify this distinction
+• Quote exact statutory text for prohibited person categories
+• **Bold** prohibited categories and critical requirements
 • If multiple provisions apply, cite all relevant sections
-• Use clear sections for multi-part answers
 
-Context provisions marked with [provision_num] for citation."""
+INTERPRETATION GUIDANCE:
+• If provisions are about seller/dealer licensing: Clarify these define who can SELL, not who can BUY
+• 18 USC 922 defines prohibitions, not permissions
+• Default structure: "The law prohibits [categories] from purchasing/possessing firearms"
+
+Context provisions below are marked with citation tags like [§922(d)(1)]."""
 
     messages = [
         {
@@ -442,6 +525,12 @@ Context provisions marked with [provision_num] for citation."""
         return response.choices[0].message.content
 
     answer = retry_with_backoff(_generate_completion)
+
+    # Validate citations to detect hallucinations
+    if not validate_citations(answer, context_results):
+        logger.warning("Answer contains hallucinated citations. Proceeding with warning logged.")
+        # Note: We log the warning but still return the answer
+        # In production, you might want to regenerate or return an error
 
     # Format response with provision links
     formatted_answer = format_response_with_highlighting(answer)
