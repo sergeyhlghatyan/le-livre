@@ -32,8 +32,7 @@ COPY --from=builder /app/package*.json ./
 RUN npm install --only=production
 
 # Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser && \
+RUN adduser -D -u 1001 appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
