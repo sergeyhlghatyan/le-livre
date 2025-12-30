@@ -82,7 +82,7 @@ def semantic_search(query: str, limit: int = 5, year: int = None) -> List[Dict[s
                     1 - (embedding <=> %s::vector) as similarity
                 FROM provision_embeddings
                 WHERE year = %s
-                  AND (1 - (embedding <=> %s::vector)) >= 0.5
+                  AND (1 - (embedding <=> %s::vector)) >= 0.35
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
             """
@@ -99,7 +99,7 @@ def semantic_search(query: str, limit: int = 5, year: int = None) -> List[Dict[s
                     heading,
                     1 - (embedding <=> %s::vector) as similarity
                 FROM provision_embeddings
-                WHERE (1 - (embedding <=> %s::vector)) >= 0.5
+                WHERE (1 - (embedding <=> %s::vector)) >= 0.35
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
             """
@@ -230,7 +230,7 @@ def graph_search(provision_id: str, year: int, relationship_type: str = None, li
         return results
 
 
-def hybrid_search(query: str, limit: int = 10, year: int = None, graph_entry_points: int = 3) -> Dict[str, Any]:
+def hybrid_search(query: str, limit: int = 5, year: int = None, graph_entry_points: int = 3) -> Dict[str, Any]:
     """
     Hybrid search combining semantic and graph-based results.
 
@@ -401,6 +401,10 @@ def generate_rag_response(query: str, context_results: List[Dict[str, Any]]) -> 
     Returns:
         LLM-generated answer with citations and formatting
     """
+    # Check if we have any results
+    if not context_results or len(context_results) == 0:
+        return "I don't have information about that in the firearms law database. The database contains provisions from 18 USC Chapter 44 (firearms regulations). Try asking about specific topics like licensing, prohibited persons, or interstate transport."
+
     # Prepare context with intelligent selection
     context = prepare_context_for_llm(context_results)
 

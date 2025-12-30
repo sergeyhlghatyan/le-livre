@@ -11,7 +11,7 @@ class ChatRequest(BaseModel):
     """Chat request model."""
     query: str
     year: Optional[int] = None
-    limit: int = 10
+    limit: int = 5
 
 
 class ChatResponse(BaseModel):
