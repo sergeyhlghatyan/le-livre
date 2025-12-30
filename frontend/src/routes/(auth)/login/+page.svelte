@@ -40,9 +40,8 @@
 	}
 </script>
 
-<div class="flex items-center justify-center min-h-[calc(100vh-3.5rem)] bg-neutral-50 dark:bg-neutral-950 p-4">
-	<div class="w-full max-w-md">
-		<Card>
+<div class="w-full max-w-md">
+	<Card>
 			<!-- Logo and Title -->
 			<div class="text-center mb-8">
 				<h1 class="text-2xl font-semibold text-neutral-900 dark:text-neutral-50 mb-2">
@@ -113,6 +112,5 @@
 					Contact your administrator for account access.
 				</p>
 			</div>
-		</Card>
-	</div>
+	</Card>
 </div>
