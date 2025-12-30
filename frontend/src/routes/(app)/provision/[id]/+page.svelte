@@ -59,6 +59,13 @@
 		{ id: 'insights', label: 'Insights' }
 	]);
 
+	// Reload provision data when URL parameter changes
+	$effect(() => {
+		if (provisionId) {
+			loadProvision();
+		}
+	});
+
 	onMount(async () => {
 		await loadProvision();
 	});

@@ -94,7 +94,7 @@ class SimilarProvisionData(BaseModel):
     """Similar provision data model."""
     provision_id: str
     heading: Optional[str]
-    text: str
+    text_content: str
     similarity_score: float
 
 

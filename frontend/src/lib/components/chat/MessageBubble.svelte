@@ -109,7 +109,7 @@
 			{@const bothSources = message.response.sources.filter(s => s.found_via && s.found_via.length > 1)}
 
 			<!-- Grouped Source Display -->
-			<div class="space-y-0">
+			<div class="space-y-4">
 				{#if semanticSources.length > 0}
 					<SourceGroup
 						title="Semantic Search"

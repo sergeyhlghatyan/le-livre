@@ -19,7 +19,7 @@ def get_provision_context(
     include_timeline: bool = True,
     include_relations: bool = True,
     include_amendments: bool = True,
-    include_definitions: bool = True,
+    include_definitions: bool = False,  # Disabled - not useful without §921
     include_similar: bool = True
 ) -> Dict[str, Any]:
     """
@@ -58,8 +58,9 @@ def get_provision_context(
     if include_amendments:
         context['amendments'] = _get_amendments(provision_id)
 
-    if include_definitions:
-        context['definitions'] = _get_definitions(provision_id, year)
+    # Definitions feature removed - not useful without §921
+    # if include_definitions:
+    #     context['definitions'] = _get_definitions(provision_id, year)
 
     if include_similar:
         context['similar'] = _get_similar_provisions(provision_id, year)
@@ -191,52 +192,11 @@ def _get_amendments(provision_id: str) -> List[Dict]:
         return amendments
 
 
-def _get_definitions(provision_id: str, year: int) -> Dict[str, Any]:
-    """Fetch definition usages for a provision."""
-    driver = get_neo4j_driver()
-
-    # Get definitions this provision USES
-    uses_query = """
-        MATCH (p:Provision {id: $provision_id, year: $year})
-              -[u:USES_DEFINITION]->(def:Provision)
-        RETURN def.id as definition_id,
-               u.term as term,
-               u.confidence as confidence
-    """
-
-    # Get definitions this provision PROVIDES (if any)
-    provides_query = """
-        MATCH (user:Provision)-[u:USES_DEFINITION]->
-              (p:Provision {id: $provision_id, year: $year})
-        RETURN user.id as user_id,
-               u.term as term,
-               count(user) as usage_count
-    """
-
-    with driver.session() as session:
-        # Fetch uses
-        uses_result = session.run(uses_query, provision_id=provision_id, year=year)
-        uses = []
-        for record in uses_result:
-            uses.append({
-                'definition_id': record['definition_id'],
-                'term': record['term'],
-                'confidence': record['confidence']
-            })
-
-        # Fetch provides
-        provides_result = session.run(provides_query, provision_id=provision_id, year=year)
-        provides = []
-        for record in provides_result:
-            provides.append({
-                'term': record['term'],
-                'usage_count': record['usage_count']
-            })
-
-        return {
-            'uses': uses,
-            'provides': provides
-        }
+# REMOVED: Definition feature not useful without §921 data
+# def _get_definitions(provision_id: str, year: int) -> Dict[str, Any]:
+#     """Fetch definition usages for a provision."""
+#     # Feature removed - only 4 definitions in §922, need §921 for this to be valuable
+#     return {'uses': [], 'provides': []}
 
 
 def _get_similar_provisions(provision_id: str, year: int, limit: int = 10) -> List[Dict]:
@@ -266,7 +226,7 @@ def _get_similar_provisions(provision_id: str, year: int, limit: int = 10) -> Li
             similar.append({
                 'provision_id': record['provision_id'],
                 'heading': record['heading'],
-                'text_content': record['text'],
+                'text_content': record['text'],  # Map Neo4j 'text' property to API 'text_content'
                 'similarity_score': record['similarity_score']
             })
 

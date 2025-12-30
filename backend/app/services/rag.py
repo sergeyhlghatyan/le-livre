@@ -82,10 +82,11 @@ def semantic_search(query: str, limit: int = 5, year: int = None) -> List[Dict[s
                     1 - (embedding <=> %s::vector) as similarity
                 FROM provision_embeddings
                 WHERE year = %s
+                  AND (1 - (embedding <=> %s::vector)) >= 0.5
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
             """
-            cur.execute(sql, (query_embedding, year, query_embedding, limit))
+            cur.execute(sql, (query_embedding, year, query_embedding, query_embedding, limit))
         else:
             sql = """
                 SELECT
@@ -98,10 +99,11 @@ def semantic_search(query: str, limit: int = 5, year: int = None) -> List[Dict[s
                     heading,
                     1 - (embedding <=> %s::vector) as similarity
                 FROM provision_embeddings
+                WHERE (1 - (embedding <=> %s::vector)) >= 0.5
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
             """
-            cur.execute(sql, (query_embedding, query_embedding, limit))
+            cur.execute(sql, (query_embedding, query_embedding, query_embedding, limit))
 
         results = []
         for row in cur.fetchall():
@@ -403,19 +405,18 @@ def generate_rag_response(query: str, context_results: List[Dict[str, Any]]) -> 
     context = prepare_context_for_llm(context_results)
 
     # Generate response with OpenAI (with retry logic)
-    system_prompt = """You are a legal research assistant specializing in US firearms law (Title 18 USC Chapter 44).
+    system_prompt = """You are a legal research assistant for US firearms law (18 USC Ch. 44).
 
-IMPORTANT INSTRUCTIONS:
-1. Cite specific provisions in your answer using this format: "According to §922(a)(1)..." or "As stated in 18 USC §922(d)..."
-2. Be concise and direct - get to the point quickly
-3. Use **bold** for key legal terms and critical requirements
-4. Quote exact statutory language when relevant, using quotation marks
-5. If multiple provisions apply, cite all relevant sections
-6. Structure your answer with clear sections if covering multiple points
+CRITICAL: Only answer using the provided context provisions below. If no provisions are provided, respond: "I don't have enough information to answer that question."
 
-Context provisions are provided below. Each is marked with [provision_num] for citation.
+Answer concisely using the provided provisions. Follow these rules:
+• Cite provisions: "According to §922(a)(1)..." or "§922(d) prohibits..."
+• **Bold** key terms and critical requirements
+• Quote exact statutory text when relevant
+• If multiple provisions apply, cite all relevant sections
+• Use clear sections for multi-part answers
 
-Answer the user's question based on the provided provisions. Cite specific sections in your response."""
+Context provisions marked with [provision_num] for citation."""
 
     messages = [
         {

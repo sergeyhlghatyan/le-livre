@@ -30,6 +30,7 @@
 	}
 
 	function navigateToDetail(e: MouseEvent) {
+		console.log('Navigating to provision:', source.provision_id, 'year:', source.year);
 		e.preventDefault();
 		e.stopPropagation();
 		goto(`/provision/${encodeURIComponent(source.provision_id)}?year=${source.year}`);
@@ -93,9 +94,9 @@
 				<h4 class="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-2">{source.heading}</h4>
 			{/if}
 
-			<!-- Text preview (200 chars) -->
+			<!-- Text preview (100 chars) -->
 			<p class="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed mb-3">
-				{source.text_content.substring(0, 200)}...
+				{source.text_content.substring(0, 100)}...
 			</p>
 
 			<!-- Action button -->

@@ -7,7 +7,6 @@
 	import { toasts } from '$lib/stores/toast.svelte';
 	import { auth } from '$lib/stores/auth.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import BreadcrumbNav from '$lib/components/BreadcrumbNav.svelte';
 	import ChatSidebar from '$lib/components/ChatSidebar.svelte';
 	import KeyboardShortcutsHelp from '$lib/components/KeyboardShortcutsHelp.svelte';
 	import { PanelRight, PanelRightClose, Share } from 'lucide-svelte';
@@ -22,8 +21,8 @@
 	let showCommandPalette = $state(false);
 	let showKeyboardHelp = $state(false);
 
-	// Auth guard
-	onMount(() => {
+	// Auth guard - redirect to login if not authenticated
+	$effect(() => {
 		if (!auth.loading && !auth.isAuthenticated) {
 			goto('/login');
 		}
@@ -101,8 +100,17 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="min-h-screen bg-neutral-50 dark:bg-neutral-950">
-	<!-- Minimal Header -->
-	<nav class="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
+	{#if auth.loading}
+		<!-- Loading state while checking authentication -->
+		<div class="flex items-center justify-center min-h-screen">
+			<div class="text-center">
+				<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+				<p class="text-neutral-600 dark:text-neutral-400">Loading...</p>
+			</div>
+		</div>
+	{:else if auth.isAuthenticated}
+		<!-- Minimal Header -->
+		<nav class="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
 		<div class="max-w-full px-6">
 			<div class="flex justify-between h-14">
 				<!-- Logo & Navigation -->
@@ -237,9 +245,6 @@
 		</div>
 	</nav>
 
-	<!-- Breadcrumb Navigation -->
-	<BreadcrumbNav />
-
 	<!-- Main Content + Sidebar -->
 	<div class="flex h-[calc(100vh-3.5rem)]">
 		<!-- Main content -->
@@ -263,5 +268,6 @@
 	<!-- Keyboard Shortcuts Help -->
 	{#if showKeyboardHelp}
 		<KeyboardShortcutsHelp onClose={() => (showKeyboardHelp = false)} />
+	{/if}
 	{/if}
 </div>
