@@ -48,6 +48,7 @@ class GraphNode(BaseModel):
     label: str
     level: str
     heading: Optional[str] = None
+    child_count: Optional[int] = None
 
 
 class GraphEdge(BaseModel):
@@ -420,6 +421,38 @@ async def get_hierarchy(provision_id: str, year: int = 2024):
         raise HTTPException(status_code=500, detail=f"Failed to fetch hierarchy: {str(e)}")
 
 
+@router.get("/sections", response_model=List[dict])
+async def get_sections():
+    """Get list of available sections."""
+    try:
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (s:Section)
+                RETURN DISTINCT s.section_num as section_num, s.heading as heading
+                ORDER BY s.section_num
+            """)
+            return [{"section_num": r["section_num"], "heading": r["heading"]} for r in result]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch sections: {str(e)}")
+
+
+@router.get("/sections/{section_num}/years", response_model=List[int])
+async def get_section_years(section_num: str):
+    """Get available years for a section."""
+    try:
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            result = session.run("""
+                MATCH (s:Section {section_num: $section_num})
+                RETURN DISTINCT s.year as year
+                ORDER BY year DESC
+            """, section_num=section_num)
+            return [r["year"] for r in result]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch years: {str(e)}")
+
+
 @router.get("/graph/{provision_id:path}", response_model=GraphResponse)
 async def get_graph(provision_id: str, year: int = 2024):
     """
@@ -440,47 +473,68 @@ async def get_graph(provision_id: str, year: int = 2024):
         driver = get_neo4j_driver()
 
         with driver.session() as session:
-            # Query for the provision and its hierarchy + references
+            # Query for the provision/section and its hierarchy + references
             query = """
-            // Get the starting provision
-            MATCH (p:Provision {id: $provision_id, year: $year})
+            // Try to match either a Section or Provision node
+            OPTIONAL MATCH (s:Section {id: $provision_id, year: $year})
+            OPTIONAL MATCH (p:Provision {id: $provision_id, year: $year})
 
-            // Get all children recursively (up to 3 levels deep)
-            OPTIONAL MATCH path1 = (p)-[:PARENT_OF*1..3]->(child:Provision)
-            WHERE child.year = $year
+            WITH COALESCE(s, p) as root
+            WHERE root IS NOT NULL
 
-            // Get all references from the provision and its children
-            OPTIONAL MATCH (p)-[:REFERENCES]->(ref:Provision)
-            OPTIONAL MATCH (child)-[:REFERENCES]->(ref2:Provision)
-            WHERE child.year = $year
+            // For Section nodes, get direct children (top-level provisions)
+            OPTIONAL MATCH (root)-[:CONTAINS]->(child1:Provision)
+            WHERE root:Section AND child1.year = $year
 
-            // Collect all nodes
-            WITH p,
-                 collect(DISTINCT child) as children,
-                 collect(DISTINCT ref) + collect(DISTINCT ref2) as refs,
-                 collect(DISTINCT {source: p.id, target: child.id, type: 'parent_of'}) as parent_edges1,
-                 [path IN collect(path1) | relationships(path)] as all_parent_paths
+            // For Provision nodes, get hierarchical children (up to 3 levels)
+            OPTIONAL MATCH path1 = (root)-[:PARENT_OF*1..3]->(child2:Provision)
+            WHERE root:Provision AND child2.year = $year
 
-            // Flatten parent edges
-            UNWIND (CASE WHEN size(all_parent_paths) > 0 THEN all_parent_paths ELSE [[]] END) as parent_path
+            WITH root,
+                 collect(DISTINCT child1) + collect(DISTINCT child2) as children
+
+            // Get all references from root and children
+            OPTIONAL MATCH (root)-[:REFERENCES]->(ref1:Provision)
+            OPTIONAL MATCH (child:Provision)-[:REFERENCES]->(ref2:Provision)
+            WHERE child IN children
+
+            // Build parent edges
+            OPTIONAL MATCH (root)-[:CONTAINS]->(c1:Provision)
+            WHERE root:Section AND c1.year = $year
+
+            OPTIONAL MATCH (root)-[:PARENT_OF]->(c2:Provision)
+            WHERE root:Provision AND c2.year = $year
+
+            OPTIONAL MATCH path2 = (root)-[:PARENT_OF*1..3]->(descendant:Provision)
+            WHERE root:Provision AND descendant.year = $year
+
+            WITH root, children,
+                 collect(DISTINCT ref1) + collect(DISTINCT ref2) as refs,
+                 collect(DISTINCT {source: root.id, target: c1.id, type: 'parent_of'}) +
+                 collect(DISTINCT {source: root.id, target: c2.id, type: 'parent_of'}) as direct_edges,
+                 [path IN collect(path2) | relationships(path)] as nested_paths
+
+            // Flatten nested parent edges
+            UNWIND (CASE WHEN size(nested_paths) > 0 THEN nested_paths ELSE [[]] END) as parent_path
             UNWIND (CASE WHEN size(parent_path) > 0 THEN parent_path ELSE [null] END) as rel
 
-            WITH p, children, refs,
+            WITH root, children, refs, direct_edges,
                  collect(DISTINCT CASE WHEN rel IS NOT NULL
                          THEN {source: startNode(rel).id, target: endNode(rel).id, type: 'parent_of'}
-                         END) as parent_edges
+                         END) as nested_edges
 
             // Get reference edges
-            OPTIONAL MATCH (p)-[r:REFERENCES]->(ref:Provision)
+            OPTIONAL MATCH (root)-[r1:REFERENCES]->(ref:Provision)
             OPTIONAL MATCH (child:Provision)-[r2:REFERENCES]->(ref2:Provision)
             WHERE child IN children
 
-            WITH p, children, refs, parent_edges,
+            WITH root, children, refs,
+                 [e IN direct_edges + nested_edges WHERE e IS NOT NULL AND e.source IS NOT NULL AND e.target IS NOT NULL] as parent_edges,
                  collect(DISTINCT {
-                     source: p.id,
+                     source: root.id,
                      target: ref.id,
                      type: 'references',
-                     display_text: r.display_text
+                     display_text: r1.display_text
                  }) + collect(DISTINCT {
                      source: child.id,
                      target: ref2.id,
@@ -489,10 +543,26 @@ async def get_graph(provision_id: str, year: int = 2024):
                  }) as ref_edges
 
             // Combine all nodes and edges
-            RETURN p.id as root_id,
-                   [p] + children + refs as all_nodes,
-                   [e IN parent_edges WHERE e IS NOT NULL] +
-                   [e IN ref_edges WHERE e IS NOT NULL] as all_edges
+            WITH root, children, refs, parent_edges, ref_edges,
+                 [root] + children + refs as all_nodes
+
+            // Calculate child count for each node
+            UNWIND all_nodes as node
+            OPTIONAL MATCH (node)-[:PARENT_OF|CONTAINS]->(child)
+            WHERE child.year = $year
+
+            WITH node, COUNT(DISTINCT child) as child_count,
+                 collect(DISTINCT root)[0] as root,
+                 collect(DISTINCT parent_edges)[0] as parent_edges,
+                 collect(DISTINCT ref_edges)[0] as ref_edges,
+                 collect(DISTINCT all_nodes)[0] as all_nodes_list
+
+            RETURN root.id as root_id,
+                   collect({
+                       node: node,
+                       child_count: child_count
+                   }) as nodes_with_counts,
+                   parent_edges + [e IN ref_edges WHERE e IS NOT NULL AND e.source IS NOT NULL AND e.target IS NOT NULL] as all_edges
             """
 
             result = session.run(query, provision_id=provision_id, year=year)
@@ -504,32 +574,49 @@ async def get_graph(provision_id: str, year: int = 2024):
                     detail=f"Provision {provision_id} not found for year {year}"
                 )
 
-            # Build nodes list
+            # Build nodes list with child counts
             nodes = []
             seen_ids = set()
 
-            for node in record["all_nodes"]:
+            for item in record["nodes_with_counts"]:
+                node = item["node"]
+                child_count = item["child_count"]
+
                 if node and node["id"] not in seen_ids:
                     seen_ids.add(node["id"])
-                    # Extract label from provision ID (e.g., "/us/usc/t18/s922/a" -> "(a)")
-                    label = node["num"] if "num" in node else node["id"].split("/")[-1]
+                    # Extract label: use num for provisions, section_num for sections
+                    if "num" in node:
+                        label = node["num"]
+                    elif "section_num" in node:
+                        label = f"§{node['section_num']}"
+                    else:
+                        label = node["id"].split("/")[-1]
+
+                    # Get level: use 'section' for Section nodes
+                    level = node.get("level", "section" if "section_num" in node else "unknown")
+
                     nodes.append(GraphNode(
                         id=node["id"],
                         label=label,
-                        level=node["level"] if "level" in node else "unknown",
-                        heading=node.get("heading")
+                        level=level,
+                        heading=node.get("heading"),
+                        child_count=child_count if child_count > 0 else None
                     ))
 
-            # Build edges list
+            # Build edges list (deduplicate by source+target+type)
             edges = []
+            seen_edges = set()
             for edge in record["all_edges"]:
                 if edge and edge["source"] and edge["target"]:
-                    edges.append(GraphEdge(
-                        source=edge["source"],
-                        target=edge["target"],
-                        type=edge["type"],
-                        display_text=edge.get("display_text")
-                    ))
+                    edge_key = (edge["source"], edge["target"], edge["type"])
+                    if edge_key not in seen_edges:
+                        seen_edges.add(edge_key)
+                        edges.append(GraphEdge(
+                            source=edge["source"],
+                            target=edge["target"],
+                            type=edge["type"],
+                            display_text=edge.get("display_text")
+                        ))
 
             return GraphResponse(nodes=nodes, edges=edges)
 
@@ -537,6 +624,163 @@ async def get_graph(provision_id: str, year: int = 2024):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch graph: {str(e)}")
+
+
+@router.get("/graph-children/{provision_id:path}", response_model=GraphResponse)
+async def get_graph_children(
+    provision_id: str,
+    year: int,
+    include_references: bool = False
+):
+    """
+    Get direct children of a provision for progressive graph expansion.
+
+    Args:
+        provision_id: Provision ID (e.g., '/us/usc/t18/s922/a')
+        year: Year
+        include_references: Whether to include REFERENCES edges for children (default: False)
+
+    Returns:
+        Graph with nodes (direct children only) and edges (parent→child + optional references)
+    """
+    try:
+        # FastAPI strips leading "/" from path parameters, so add it back if missing
+        if not provision_id.startswith('/'):
+            provision_id = '/' + provision_id
+
+        driver = get_neo4j_driver()
+
+        with driver.session() as session:
+            # Query for direct children only (1 level)
+            query = """
+            // Match the parent (Section or Provision)
+            OPTIONAL MATCH (s:Section {id: $provision_id, year: $year})
+            OPTIONAL MATCH (p:Provision {id: $provision_id, year: $year})
+
+            WITH COALESCE(s, p) as parent
+            WHERE parent IS NOT NULL
+
+            // Get direct children via CONTAINS (for Sections) or PARENT_OF (for Provisions)
+            OPTIONAL MATCH (parent)-[:CONTAINS]->(child1:Provision)
+            WHERE parent:Section AND child1.year = $year
+
+            OPTIONAL MATCH (parent)-[:PARENT_OF]->(child2:Provision)
+            WHERE parent:Provision AND child2.year = $year
+
+            WITH parent,
+                 collect(DISTINCT child1) + collect(DISTINCT child2) as children
+
+            // Get references if requested
+            OPTIONAL MATCH (child)-[:REFERENCES]->(ref:Provision)
+            WHERE child IN children AND $include_references = true
+
+            // Build edges
+            OPTIONAL MATCH (parent)-[:CONTAINS]->(c1:Provision)
+            WHERE parent:Section AND c1 IN children
+
+            OPTIONAL MATCH (parent)-[:PARENT_OF]->(c2:Provision)
+            WHERE parent:Provision AND c2 IN children
+
+            WITH parent, children,
+                 collect(DISTINCT ref) as refs,
+                 collect(DISTINCT {source: parent.id, target: c1.id, type: 'parent_of'}) +
+                 collect(DISTINCT {source: parent.id, target: c2.id, type: 'parent_of'}) as parent_edges
+
+            // Reference edges
+            OPTIONAL MATCH (child)-[r:REFERENCES]->(ref:Provision)
+            WHERE child IN children AND $include_references = true AND ref IN refs
+
+            WITH parent, children, refs, parent_edges,
+                 collect(DISTINCT {
+                     source: child.id,
+                     target: ref.id,
+                     type: 'references',
+                     display_text: r.display_text
+                 }) as ref_edges,
+                 children + refs as all_nodes
+
+            // Calculate child count for each node
+            UNWIND all_nodes as node
+            OPTIONAL MATCH (node)-[:PARENT_OF|CONTAINS]->(grandchild)
+            WHERE grandchild.year = $year
+
+            WITH node, COUNT(DISTINCT grandchild) as child_count,
+                 collect(DISTINCT parent)[0] as parent,
+                 collect(DISTINCT parent_edges)[0] as parent_edges,
+                 collect(DISTINCT ref_edges)[0] as ref_edges
+
+            RETURN parent.id as parent_id,
+                   collect({
+                       node: node,
+                       child_count: child_count
+                   }) as nodes_with_counts,
+                   parent_edges + [e IN ref_edges WHERE e IS NOT NULL AND e.source IS NOT NULL AND e.target IS NOT NULL] as all_edges
+            """
+
+            result = session.run(
+                query,
+                provision_id=provision_id,
+                year=year,
+                include_references=include_references
+            )
+            record = result.single()
+
+            if not record or not record["parent_id"]:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Provision {provision_id} not found for year {year}"
+                )
+
+            # Build nodes list with child counts
+            nodes = []
+            seen_ids = set()
+
+            for item in record["nodes_with_counts"]:
+                node = item["node"]
+                child_count = item["child_count"]
+
+                if node and node["id"] not in seen_ids:
+                    seen_ids.add(node["id"])
+                    # Extract label: use num for provisions, section_num for sections
+                    if "num" in node:
+                        label = node["num"]
+                    elif "section_num" in node:
+                        label = f"§{node['section_num']}"
+                    else:
+                        label = node["id"].split("/")[-1]
+
+                    # Get level: use 'section' for Section nodes
+                    level = node.get("level", "section" if "section_num" in node else "unknown")
+
+                    nodes.append(GraphNode(
+                        id=node["id"],
+                        label=label,
+                        level=level,
+                        heading=node.get("heading"),
+                        child_count=child_count if child_count > 0 else None
+                    ))
+
+            # Build edges list (deduplicate by source+target+type)
+            edges = []
+            seen_edges = set()
+            for edge in record["all_edges"]:
+                if edge and edge["source"] and edge["target"]:
+                    edge_key = (edge["source"], edge["target"], edge["type"])
+                    if edge_key not in seen_edges:
+                        seen_edges.add(edge_key)
+                        edges.append(GraphEdge(
+                            source=edge["source"],
+                            target=edge["target"],
+                            type=edge["type"],
+                            display_text=edge.get("display_text")
+                        ))
+
+            return GraphResponse(nodes=nodes, edges=edges)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch children: {str(e)}")
 
 
 @router.get("/provision/{provision_id:path}/{year}", response_model=ProvisionResponse)

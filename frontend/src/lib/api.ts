@@ -109,6 +109,7 @@ export interface GraphNode {
 	label: string;
 	level: string;
 	heading?: string;
+	child_count?: number;
 }
 
 export interface GraphEdge {
@@ -368,13 +369,64 @@ export const api = {
 	},
 
 	async getGraph(provisionId: string, year: number = 2024): Promise<GraphResponse> {
+		// Remove leading slash from provision ID to avoid double slashes in URL
+		const cleanId = provisionId.startsWith('/') ? provisionId.slice(1) : provisionId;
 		const response = await fetch(
-			`${API_BASE_URL}/provisions/graph/${encodeURIComponent(provisionId)}?year=${year}`,
+			`${API_BASE_URL}/provisions/graph/${encodeURIComponent(cleanId)}?year=${year}`,
 			{ credentials: 'include' }
 		);
 
 		if (!response.ok) {
 			throw new Error(`Failed to get graph: ${response.statusText}`);
+		}
+
+		return response.json();
+	},
+
+	async getGraphChildren(
+		provisionId: string,
+		year: number,
+		includeReferences: boolean = false
+	): Promise<GraphResponse> {
+		// Remove leading slash from provision ID to avoid double slashes in URL
+		const cleanId = provisionId.startsWith('/') ? provisionId.slice(1) : provisionId;
+		const params = new URLSearchParams({
+			year: year.toString(),
+			include_references: includeReferences.toString()
+		});
+
+		const response = await fetch(
+			`${API_BASE_URL}/provisions/graph-children/${encodeURIComponent(cleanId)}?${params}`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to get children: ${response.statusText}`);
+		}
+
+		return response.json();
+	},
+
+	async getSections(): Promise<Array<{ section_num: string; heading: string }>> {
+		const response = await fetch(`${API_BASE_URL}/provisions/sections`, {
+			credentials: 'include'
+		});
+
+		if (!response.ok) {
+			throw new Error(`Failed to get sections: ${response.statusText}`);
+		}
+
+		return response.json();
+	},
+
+	async getSectionYears(sectionNum: string): Promise<number[]> {
+		const response = await fetch(
+			`${API_BASE_URL}/provisions/sections/${sectionNum}/years`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			throw new Error(`Failed to get years: ${response.statusText}`);
 		}
 
 		return response.json();
